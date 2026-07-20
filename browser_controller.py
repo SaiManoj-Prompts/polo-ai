@@ -38,6 +38,23 @@ BLOCKED_EXTENSIONS = [
     ".mp3", ".mp4", ".avi", ".mov", ".wav",
 ]
 
+# Title keywords that indicate a page is irrelevant to research
+IRRELEVANT_TITLE_WORDS = [
+    "newsletter", "subscribe", "captcha", "sign up", "email",
+    "bot protection", "verification", "cloudflare", "access denied",
+    "403 forbidden", "404 not found", "cookie policy",
+]
+
+# Common stop words to ignore when extracting query keywords
+STOP_WORDS = {
+    "the", "is", "a", "an", "of", "in", "for", "and", "to", "with",
+    "on", "at", "by", "from", "or", "as", "it", "be", "are", "was",
+    "were", "been", "has", "have", "had", "do", "does", "did", "but",
+    "not", "so", "if", "its", "my", "that", "this", "what", "which",
+    "who", "how", "when", "where", "why", "can", "will", "should",
+    "would", "could", "most", "more", "very", "just", "about",
+}
+
 
 def _is_safe_url(url: str) -> bool:
     """Check if a URL is safe to visit (no logins, payments, downloads)."""
@@ -54,6 +71,27 @@ def _is_safe_url(url: str) -> bool:
             return False
 
     return True
+
+
+def _extract_query_keywords(query: str) -> set:
+    """Extract meaningful keywords from the user's query, ignoring stop words."""
+    words = re.findall(r"[a-zA-Z0-9]+", query.lower())
+    return {w for w in words if w not in STOP_WORDS and len(w) > 1}
+
+
+def _is_title_relevant(title: str, query_keywords: set) -> bool:
+    """Check if a page title is relevant to the query and not junk."""
+    title_lower = title.lower()
+
+    # Reject if title matches any irrelevant pattern
+    for word in IRRELEVANT_TITLE_WORDS:
+        if word in title_lower:
+            return False
+
+    # Require at least 1 keyword overlap with the query
+    title_words = set(re.findall(r"[a-zA-Z0-9]+", title_lower))
+    overlap = title_words & query_keywords
+    return len(overlap) >= 1
 
 
 def _is_noisy_text(text: str) -> bool:
@@ -116,8 +154,12 @@ def _block_forms_and_submissions(page):
         pass  # Page might not support JS injection; that's okay
 
 
-def _extract_search_links(page) -> list[str]:
-    """Extract search result URLs from a Mojeek HTML results page."""
+def _extract_search_links(page) -> list[tuple[str, str]]:
+    """Extract search result URLs and their link text from a Mojeek results page.
+
+    Returns:
+        A list of (url, link_text) tuples.
+    """
     links = []
     seen = set()
     try:
@@ -131,11 +173,12 @@ def _extract_search_links(page) -> list[str]:
             elements = page.query_selector_all(selector)
             for el in elements:
                 href = el.get_attribute("href")
+                link_text = (el.inner_text() or "").strip()
                 if href and href.startswith("http") and _is_safe_url(href):
                     normalized = href.rstrip('/')
                     if normalized not in seen:
                         seen.add(normalized)
-                        links.append(href)
+                        links.append((href, link_text))
                 if len(links) >= 15:
                     break
             if links:
@@ -146,6 +189,7 @@ def _extract_search_links(page) -> list[str]:
             all_anchors = page.query_selector_all("a[href^='http']")
             for el in all_anchors:
                 href = el.get_attribute("href")
+                link_text = (el.inner_text() or "").strip()
                 if (
                     href
                     and "mojeek.com" not in href
@@ -154,7 +198,7 @@ def _extract_search_links(page) -> list[str]:
                     normalized = href.rstrip('/')
                     if normalized not in seen:
                         seen.add(normalized)
-                        links.append(href)
+                        links.append((href, link_text))
                     if len(links) >= 15:
                         break
 
@@ -206,6 +250,7 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES) -> list[dict]:
         search_url = (
             "https://www.mojeek.com/search?q="
             + urllib.parse.quote_plus(query)
+            + "&lb=en&fmt=10"
         )
 
         try:
@@ -219,19 +264,39 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES) -> list[dict]:
             return [{"title": "Search failed", "url": search_url,
                       "snippet": f"Could not reach Mojeek: {str(e)[:200]}"}]
 
-        # ── Step 2: Extract result links ─────────────────────────────
-        result_urls = _extract_search_links(page)
+        # ── Step 2: Extract result links and rank by relevance ────────
+        raw_results = _extract_search_links(page)
 
-        if not result_urls:
+        if not raw_results:
             browser.close()
             return [{"title": "No results found", "url": search_url,
                       "snippet": "Mojeek returned no usable results for this query."}]
 
+        # Extract keywords from the query for relevance scoring
+        query_keywords = _extract_query_keywords(query)
+
+        # Pre-filter: remove results whose link text is clearly irrelevant
+        filtered_results = [
+            (url, text) for url, text in raw_results
+            if _is_title_relevant(text, query_keywords)
+        ]
+
+        # Rank remaining results by keyword overlap (descending)
+        def _relevance_score(item):
+            _, text = item
+            text_words = set(re.findall(r"[a-zA-Z0-9]+", text.lower()))
+            return len(text_words & query_keywords)
+
+        filtered_results.sort(key=_relevance_score, reverse=True)
+
+        # Take the top 10 candidates to visit
+        candidates = filtered_results[:10]
+
         # ── Step 3: Visit each result page ───────────────────────────
-        for url in result_urls:
+        for url, _link_text in candidates:
             if len(findings) >= max_pages:
                 break
-                
+
             try:
                 page.goto(url, timeout=PAGE_TIMEOUT_MS, wait_until="domcontentloaded")
 
@@ -240,8 +305,13 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES) -> list[dict]:
 
                 # Collect data
                 title = page.title() or "(No title)"
+
+                # Double-check the actual page title for relevance
+                if not _is_title_relevant(title, query_keywords):
+                    continue
+
                 snippet = _extract_text_snippet(page)
-                
+
                 # Skip if no useful content found
                 if not snippet:
                     continue
@@ -253,15 +323,19 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES) -> list[dict]:
                 })
 
             except PlaywrightTimeout:
-                findings.append({
-                    "title": "(Page timed out)",
-                    "url": url,
-                    "snippet": "This page took longer than 30 seconds to load and was skipped.",
-                })
+                continue  # Skip timed-out pages silently
             except Exception:
                 # Silently skip pages that fail to load
                 continue
 
         browser.close()
+
+    # If fewer than 2 relevant results, return an insufficient-sources message
+    if len(findings) < 2:
+        return [{
+            "title": "Insufficient results",
+            "url": "",
+            "snippet": "Insufficient relevant sources found for this query."
+        }]
 
     return findings
