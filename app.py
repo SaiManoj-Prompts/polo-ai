@@ -2,6 +2,7 @@ import time
 import streamlit as st
 from browser_controller import search_and_collect
 import db_manager
+from report_generator import generate_report
 
 # ── Page config ──────────────────────────────────────────────────────────
 st.set_page_config(
@@ -186,3 +187,31 @@ with col3:
                     st.write("No findings.")
     else:
         st.info("Nothing here yet.")
+
+st.divider()
+
+# ── Final Research Report ───────────────────────────────────────────────
+if st.session_state.step_index >= 0 and not st.session_state.running:
+    st.header("📄 Final Research Report")
+    md_report, json_report = generate_report(st.session_state.task, st.session_state.findings)
+    
+    st.markdown(md_report)
+    
+    st.markdown("### Download Report")
+    dl_col1, dl_col2 = st.columns(2)
+    with dl_col1:
+        st.download_button(
+            label="⬇️ Download Markdown",
+            data=md_report,
+            file_name="research_report.md",
+            mime="text/markdown",
+            use_container_width=True
+        )
+    with dl_col2:
+        st.download_button(
+            label="⬇️ Download JSON",
+            data=json_report,
+            file_name="research_report.json",
+            mime="application/json",
+            use_container_width=True
+        )
