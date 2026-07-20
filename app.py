@@ -1,6 +1,7 @@
 import time
 import streamlit as st
 from browser_controller import search_and_collect
+import db_manager
 
 # ── Page config ──────────────────────────────────────────────────────────
 st.set_page_config(
@@ -8,6 +9,9 @@ st.set_page_config(
     page_icon="🐎",
     layout="wide",
 )
+
+# Ensure DB is initialized
+db_manager.init_db()
 
 # ── Session state defaults ──────────────────────────────────────────────
 if "task" not in st.session_state:
@@ -126,6 +130,13 @@ if st.session_state.running:
     step_container.markdown("\n\n".join(final_lines))
     progress_bar.progress(100, text="✅ Research complete!")
 
+    # Save to database
+    db_manager.save_task(
+        query=st.session_state.task,
+        status="Completed",
+        findings=st.session_state.findings
+    )
+
     st.session_state.running = False
     st.session_state.step_index = len(STEPS) - 1
 
@@ -162,4 +173,16 @@ with col2:
 
 with col3:
     st.subheader("📚 Task History")
-    st.info("Nothing here yet.")
+    history = db_manager.get_all_tasks()
+    if history:
+        for task in history:
+            query_preview = task['query'][:30] + ('...' if len(task['query']) > 30 else '')
+            with st.expander(f"Task: {query_preview} ({task['created_at']})"):
+                st.write(f"**Status:** {task['status']}")
+                if task.get('findings'):
+                    for f in task['findings']:
+                        st.markdown(f"- [{f['title']}]({f['url']})")
+                else:
+                    st.write("No findings.")
+    else:
+        st.info("Nothing here yet.")
