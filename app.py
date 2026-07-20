@@ -1,5 +1,6 @@
 import time
 import streamlit as st
+from browser_controller import search_and_collect
 
 # ── Page config ──────────────────────────────────────────────────────────
 st.set_page_config(
@@ -15,6 +16,8 @@ if "step_index" not in st.session_state:
     st.session_state.step_index = -1  # -1 = not started
 if "running" not in st.session_state:
     st.session_state.running = False
+if "findings" not in st.session_state:
+    st.session_state.findings = []
 
 # The six demo research steps
 STEPS = [
@@ -52,6 +55,7 @@ if reset_clicked:
     st.session_state.task = ""
     st.session_state.step_index = -1
     st.session_state.running = False
+    st.session_state.findings = []
     st.rerun()
 
 # ── Handle Execute ───────────────────────────────────────────────────────
@@ -104,7 +108,16 @@ if st.session_state.running:
             text=f"{emoji} {label}…",
         )
 
-        time.sleep(1.5)
+        # Steps 3 & 4 (index 2 & 3) do real browsing;
+        # all other steps use demo sleep.
+        if i == 2:  # "Searching public sources"
+            st.session_state.findings = search_and_collect(
+                st.session_state.task
+            )
+        elif i == 3:  # "Reading webpages" — already done above
+            time.sleep(0.5)  # brief pause for visual flow
+        else:
+            time.sleep(1.5)
 
         st.session_state.step_index = i
 
@@ -137,7 +150,15 @@ with col1:
 
 with col2:
     st.subheader("📄 Research Findings")
-    st.info("Nothing here yet.")
+    if st.session_state.findings:
+        for idx, finding in enumerate(st.session_state.findings, 1):
+            st.markdown(f"**{idx}. {finding['title']}**")
+            st.markdown(f"🔗 [{finding['url']}]({finding['url']})")
+            st.caption(finding["snippet"])
+            if idx < len(st.session_state.findings):
+                st.markdown("---")
+    else:
+        st.info("Nothing here yet.")
 
 with col3:
     st.subheader("📚 Task History")
