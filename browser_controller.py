@@ -56,19 +56,52 @@ def _is_safe_url(url: str) -> bool:
     return True
 
 
+def _is_noisy_text(text: str) -> bool:
+    """Check if the text contains common navigation/cookie banner noise."""
+    lower_text = text.lower()
+    noise_phrases = [
+        "skip to content", "select theme", "ctrl k", "dark light auto",
+        "select language", "cookie", "accept all", "manage preferences",
+        "sign in", "log in", "subscribe", "about us", "privacy policy",
+        "all rights reserved", "terms of use", "terms of service",
+        "javascript is disabled", "please enable javascript",
+        "categories", "archives"
+    ]
+    for phrase in noise_phrases:
+        if phrase in lower_text:
+            return True
+    return False
+
+
 def _extract_text_snippet(page, max_length: int = SNIPPET_LENGTH) -> str:
-    """Extract the first visible text from a page, cleaned up."""
+    """Extract clean body paragraphs from a page, stripping navigation noise."""
     try:
-        # Get text from the body, stripping extra whitespace
-        raw_text = page.inner_text("body", timeout=5000)
-        # Clean up: collapse whitespace and newlines
-        cleaned = re.sub(r"\s+", " ", raw_text).strip()
+        paragraphs = page.locator("p").all_inner_texts()
+        valid_paragraphs = []
+        
+        for p in paragraphs:
+            cleaned = re.sub(r"\s+", " ", p).strip()
+            # Require at least 60 characters for a substantive paragraph
+            if len(cleaned) < 60:
+                continue
+            if _is_noisy_text(cleaned):
+                continue
+            valid_paragraphs.append(cleaned)
+            
+        if not valid_paragraphs:
+            return ""
+            
+        # The longest paragraph is almost always the main article content,
+        # avoiding concatenated lists of links or headers.
+        best_paragraph = max(valid_paragraphs, key=len)
+        raw_text = best_paragraph
+            
         # Truncate to max length
-        if len(cleaned) > max_length:
-            return cleaned[:max_length] + "…"
-        return cleaned
+        if len(raw_text) > max_length:
+            return raw_text[:max_length] + "…"
+        return raw_text
     except Exception:
-        return "(Could not extract text from this page.)"
+        return ""
 
 
 def _block_forms_and_submissions(page):
@@ -86,6 +119,7 @@ def _block_forms_and_submissions(page):
 def _extract_search_links(page) -> list[str]:
     """Extract search result URLs from a Mojeek HTML results page."""
     links = []
+    seen = set()
     try:
         # Mojeek results typically use <a> with class "ob" or "title" inside results list
         selectors = [
@@ -98,10 +132,11 @@ def _extract_search_links(page) -> list[str]:
             for el in elements:
                 href = el.get_attribute("href")
                 if href and href.startswith("http") and _is_safe_url(href):
-                    # Avoid duplicate URLs
-                    if href not in links:
+                    normalized = href.rstrip('/')
+                    if normalized not in seen:
+                        seen.add(normalized)
                         links.append(href)
-                if len(links) >= MAX_PAGES:
+                if len(links) >= 15:
                     break
             if links:
                 break
@@ -116,15 +151,17 @@ def _extract_search_links(page) -> list[str]:
                     and "mojeek.com" not in href
                     and _is_safe_url(href)
                 ):
-                    if href not in links:
+                    normalized = href.rstrip('/')
+                    if normalized not in seen:
+                        seen.add(normalized)
                         links.append(href)
-                    if len(links) >= MAX_PAGES:
+                    if len(links) >= 15:
                         break
 
     except Exception:
         pass
 
-    return links[:MAX_PAGES]
+    return links[:15]
 
 
 def search_and_collect(query: str, max_pages: int = MAX_PAGES) -> list[dict]:
@@ -191,7 +228,10 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES) -> list[dict]:
                       "snippet": "Mojeek returned no usable results for this query."}]
 
         # ── Step 3: Visit each result page ───────────────────────────
-        for url in result_urls[:max_pages]:
+        for url in result_urls:
+            if len(findings) >= max_pages:
+                break
+                
             try:
                 page.goto(url, timeout=PAGE_TIMEOUT_MS, wait_until="domcontentloaded")
 
@@ -201,6 +241,10 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES) -> list[dict]:
                 # Collect data
                 title = page.title() or "(No title)"
                 snippet = _extract_text_snippet(page)
+                
+                # Skip if no useful content found
+                if not snippet:
+                    continue
 
                 findings.append({
                     "title": title,
