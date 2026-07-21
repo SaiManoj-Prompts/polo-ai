@@ -35,7 +35,7 @@ Example output format:
     }
 
     try:
-        response = requests.post(OLLAMA_URL, json=payload, timeout=15)
+        response = requests.post(OLLAMA_URL, json=payload, timeout=60)
         response.raise_for_status()
         
         data = response.json()
