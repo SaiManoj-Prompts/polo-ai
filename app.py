@@ -3,6 +3,7 @@ import streamlit as st
 from browser_controller import search_and_collect
 import db_manager
 from report_generator import generate_report
+import planner
 
 # ── Page config ──────────────────────────────────────────────────────────
 st.set_page_config(
@@ -23,6 +24,8 @@ if "running" not in st.session_state:
     st.session_state.running = False
 if "findings" not in st.session_state:
     st.session_state.findings = []
+if "ai_plan" not in st.session_state:
+    st.session_state.ai_plan = []
 
 # The six demo research steps
 STEPS = [
@@ -61,6 +64,7 @@ if reset_clicked:
     st.session_state.step_index = -1
     st.session_state.running = False
     st.session_state.findings = []
+    st.session_state.ai_plan = []
     st.rerun()
 
 # ── Handle Execute ───────────────────────────────────────────────────────
@@ -73,6 +77,7 @@ if execute_clicked:
         st.session_state.task = ""
         st.session_state.step_index = -1
         st.session_state.running = False
+        st.session_state.ai_plan = []
 
 st.divider()
 
@@ -83,6 +88,11 @@ if execute_clicked and not user_input.strip():
     st.warning("Please enter a task above to get started.")
 elif st.session_state.task:
     st.success(st.session_state.task)
+    
+    if st.session_state.get("ai_plan"):
+        with st.expander("🧠 AI Research Plan", expanded=True):
+            for i, step in enumerate(st.session_state.ai_plan, 1):
+                st.markdown(f"{i}. {step}")
 else:
     st.info("Enter a research task above and click **Execute Task** to begin.")
 
@@ -93,6 +103,11 @@ st.divider()
 # It uses st.empty() containers so each step updates in place.
 
 if st.session_state.running:
+    if not st.session_state.get("ai_plan"):
+        with st.spinner("🧠 AI is formulating a research plan..."):
+            st.session_state.ai_plan = planner.generate_plan(st.session_state.task)
+            st.rerun()
+
     progress_bar = st.progress(0, text="Starting research…")
     step_container = st.empty()
 
