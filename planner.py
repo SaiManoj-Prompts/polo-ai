@@ -3,7 +3,7 @@ import requests
 from typing import List
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL_NAME = "llama3"
+MODEL_NAME = "gemma4:12b"
 
 def generate_plan(query: str) -> List[str]:
     """
