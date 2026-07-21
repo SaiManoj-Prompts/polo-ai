@@ -54,8 +54,11 @@ def generate_report(query: str, findings: list) -> tuple[str, str]:
         for f in findings:
             title = f.get("title", "Untitled")
             url = f.get("url", "")
-            md_lines.append(f"- [{title}]({url})")
-            report_dict["sources_list"].append({"title": title, "url": url})
+            if not url or title == "Insufficient results":
+                md_lines.append("- ⚠️ No relevant sources found for this query. Try rephrasing your request or ask about a different topic.")
+            else:
+                md_lines.append(f"- [{title}]({url})")
+                report_dict["sources_list"].append({"title": title, "url": url})
             
     else:
         md_lines.append("No findings were collected for this task.")

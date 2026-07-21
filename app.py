@@ -179,11 +179,14 @@ with col2:
     st.subheader("📄 Research Findings")
     if st.session_state.findings:
         for idx, finding in enumerate(st.session_state.findings, 1):
-            st.markdown(f"**{idx}. {finding['title']}**")
-            st.markdown(f"🔗 [{finding['url']}]({finding['url']})")
-            st.caption(finding["snippet"])
-            if idx < len(st.session_state.findings):
-                st.markdown("---")
+            if not finding.get('url') or finding.get('title') == 'Insufficient results':
+                st.warning("⚠️ No relevant sources found for this query. Try rephrasing your request or ask about a different topic.")
+            else:
+                st.markdown(f"**{idx}. {finding['title']}**")
+                st.markdown(f"🔗 [{finding['url']}]({finding['url']})")
+                st.caption(finding["snippet"])
+                if idx < len(st.session_state.findings):
+                    st.markdown("---")
     else:
         st.info("Nothing here yet.")
 
@@ -197,7 +200,10 @@ with col3:
                 st.write(f"**Status:** {task['status']}")
                 if task.get('findings'):
                     for f in task['findings']:
-                        st.markdown(f"- [{f['title']}]({f['url']})")
+                        if not f.get('url') or f.get('title') == 'Insufficient results':
+                            st.warning("⚠️ No relevant sources found for this query.")
+                        else:
+                            st.markdown(f"- [{f['title']}]({f['url']})")
                 else:
                     st.write("No findings.")
     else:
