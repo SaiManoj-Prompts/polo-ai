@@ -25,7 +25,7 @@ if "running" not in st.session_state:
 if "findings" not in st.session_state:
     st.session_state.findings = []
 if "ai_plan" not in st.session_state:
-    st.session_state.ai_plan = []
+    st.session_state.ai_plan = None
 
 # The six demo research steps
 STEPS = [
@@ -64,7 +64,7 @@ if reset_clicked:
     st.session_state.step_index = -1
     st.session_state.running = False
     st.session_state.findings = []
-    st.session_state.ai_plan = []
+    st.session_state.ai_plan = None
     st.rerun()
 
 # ── Handle Execute ───────────────────────────────────────────────────────
@@ -77,7 +77,7 @@ if execute_clicked:
         st.session_state.task = ""
         st.session_state.step_index = -1
         st.session_state.running = False
-        st.session_state.ai_plan = []
+        st.session_state.ai_plan = None
 
 st.divider()
 
@@ -90,9 +90,28 @@ elif st.session_state.task:
     st.success(st.session_state.task)
     
     if st.session_state.get("ai_plan"):
+        ai_data = st.session_state.ai_plan
+        if isinstance(ai_data, list):
+            plan_steps = ai_data
+            queries = []
+        else:
+            plan_steps = ai_data.get("plan", [])
+            category = ai_data.get("category", "unknown")
+            queries = ai_data.get("queries", [])
+            source = ai_data.get("source", "Unknown")
+
         with st.expander("🧠 AI Research Plan", expanded=True):
-            for i, step in enumerate(st.session_state.ai_plan, 1):
+            for i, step in enumerate(plan_steps, 1):
                 st.markdown(f"{i}. {step}")
+                
+        if queries:
+            with st.expander("🔍 Search strategy used", expanded=True):
+                st.markdown(f"**Category:** `{category}`")
+                source_color = "green" if source == "Ollama" else "orange"
+                st.markdown(f"**Source:** :{source_color}[{source}]")
+                st.markdown("**Queries:**")
+                for q in queries:
+                    st.markdown(f"- {q}")
 else:
     st.info("Enter a research task above and click **Execute Task** to begin.")
 
@@ -131,9 +150,17 @@ if st.session_state.running:
         # Steps 3 & 4 (index 2 & 3) do real browsing;
         # all other steps use demo sleep.
         if i == 2:  # "Searching public sources"
-            st.session_state.findings = search_and_collect(
-                st.session_state.task
-            )
+            ai_data = st.session_state.get("ai_plan", {})
+            if isinstance(ai_data, dict) and ai_data.get("queries"):
+                st.session_state.findings = search_and_collect(
+                    st.session_state.task,
+                    queries=ai_data["queries"],
+                    category=ai_data.get("category")
+                )
+            else:
+                st.session_state.findings = search_and_collect(
+                    st.session_state.task
+                )
         elif i == 3:  # "Reading webpages" — already done above
             time.sleep(0.5)  # brief pause for visual flow
         else:

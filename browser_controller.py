@@ -583,7 +583,7 @@ def _search_arxiv(page, query, query_keywords, findings, seen_urls, max_to_add=1
 
 # ── Main orchestrator ────────────────────────────────────────────────────
 
-def search_and_collect(query: str, max_pages: int = MAX_PAGES) -> list[dict]:
+def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = None, category: str = None) -> list[dict]:
     """
     Search the web and collect findings using multiple sources.
 
@@ -596,6 +596,8 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES) -> list[dict]:
     Args:
         query: The user's research question.
         max_pages: Maximum number of pages to visit (default 5).
+        queries: List of validated queries for bounded multi-query search.
+        category: AI-derived category.
 
     Returns:
         A list of dicts, each with keys: 'title', 'url', 'snippet'.
@@ -603,14 +605,16 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES) -> list[dict]:
     max_pages = min(max_pages, MAX_PAGES)  # enforce hard cap
     findings = []
     seen_urls = set()
-    query_keywords = _extract_query_keywords(query)
     
-    # Create a simplified query string for strict search engines (GitHub, arXiv)
-    simplified_query = " ".join(
-        [w for w in re.findall(r"[a-zA-Z0-9]+", query) if w.lower() not in STOP_WORDS]
-    )
-    if not simplified_query:
-        simplified_query = query
+    if queries is None:
+        queries = [query]
+        
+    is_career = False
+    if category == "career":
+        is_career = True
+    else:
+        combined_text = " ".join(queries).lower()
+        is_career = _is_career_query(_extract_query_keywords(combined_text))
 
     with sync_playwright() as p:
         # Launch headless Chromium with safety flags
@@ -636,82 +640,128 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES) -> list[dict]:
         page = context.new_page()
 
         # ── Stage 1.0: USAJobs (Career queries only) ─────────────
-        if _is_career_query(query_keywords):
+        if is_career:
             usajobs_page = None
             try:
                 usajobs_page = context.new_page()
-                _search_usajobs(
-                    usajobs_page, simplified_query, findings, seen_urls,
-                    max_to_add=min(3, max_pages),
-                )
+                for q in queries:
+                    if len(findings) >= min(3, max_pages):
+                        break
+                    
+                    simplified_q = " ".join(
+                        [w for w in re.findall(r"[a-zA-Z0-9]+", q) if w.lower() not in STOP_WORDS]
+                    )
+                    if not simplified_q:
+                        simplified_q = q
+                    
+                    _search_usajobs(
+                        usajobs_page, simplified_q, findings, seen_urls,
+                        max_to_add=min(3, max_pages) - len(findings),
+                    )
             finally:
                 if usajobs_page:
                     usajobs_page.close()
 
         # ── Stage 1.1: Mojeek ──────────────────────────────────────
-        search_url = (
-            "https://www.mojeek.com/search?q="
-            + urllib.parse.quote_plus(query)
-            + "&lb=en&fmt=10"
-        )
+        for q in queries:
+            if len(findings) >= max_pages:
+                break
+                
+            q_keywords = _extract_query_keywords(q)
+            search_url = (
+                "https://www.mojeek.com/search?q="
+                + urllib.parse.quote_plus(q)
+                + "&lb=en&fmt=10"
+            )
 
-        try:
-            page.goto(search_url, timeout=PAGE_TIMEOUT_MS, wait_until="domcontentloaded")
-            raw_results = _extract_search_links(page)
+            try:
+                page.goto(search_url, timeout=PAGE_TIMEOUT_MS, wait_until="domcontentloaded")
+                raw_results = _extract_search_links(page)
 
-            if raw_results:
-                # Filter URLs before parsing completely
-                for b in IRRELEVANT_URL_PATTERNS:
-                    raw_results = [(u, t) for u, t in raw_results if b not in u.lower()]
+                if raw_results:
+                    # Filter URLs before parsing completely
+                    for b in IRRELEVANT_URL_PATTERNS:
+                        raw_results = [(u, t) for u, t in raw_results if b not in u.lower()]
 
-                # Pre-filter and rank by relevance
-                filtered = [
-                    (url, text) for url, text in raw_results
-                    if _is_title_relevant(text, query_keywords)
-                ]
+                    # Pre-filter and rank by relevance
+                    filtered = [
+                        (url, text) for url, text in raw_results
+                        if _is_title_relevant(text, q_keywords)
+                    ]
 
-                def _relevance_score(item):
-                    _, text = item
-                    text_words = set(re.findall(r"[a-zA-Z0-9]+", text.lower()))
-                    return len(text_words & query_keywords)
+                    def _relevance_score(item):
+                        _, text = item
+                        text_words = set(re.findall(r"[a-zA-Z0-9]+", text.lower()))
+                        return len(text_words & q_keywords)
 
-                filtered.sort(key=_relevance_score, reverse=True)
+                    filtered.sort(key=_relevance_score, reverse=True)
 
-                for url, _link_text in filtered[:10]:
-                    if len(findings) >= max_pages:
-                        break
-                    _visit_and_collect(page, url, query, query_keywords, findings, seen_urls)
+                    for url, _link_text in filtered[:10]:
+                        if len(findings) >= max_pages:
+                            break
+                        _visit_and_collect(page, url, q, q_keywords, findings, seen_urls)
 
-        except Exception:
-            pass  # Mojeek failed entirely — proceed to fallbacks
+            except Exception:
+                pass  # Mojeek failed entirely — proceed to next query
 
         # ── Stage 1.5: Indeed (Career queries only) ──────────────
-        if len(findings) < max_pages and _is_career_query(query_keywords):
-            _search_indeed(
-                page, simplified_query, findings, seen_urls,
-                max_to_add=max_pages - len(findings),
-            )
+        if len(findings) < max_pages and is_career:
+            for q in queries:
+                if len(findings) >= max_pages:
+                    break
+                simplified_q = " ".join(
+                    [w for w in re.findall(r"[a-zA-Z0-9]+", q) if w.lower() not in STOP_WORDS]
+                )
+                if not simplified_q:
+                    simplified_q = q
+                    
+                _search_indeed(
+                    page, simplified_q, findings, seen_urls,
+                    max_to_add=max_pages - len(findings),
+                )
 
         # ── Stage 2: Wikipedia (if needed) ───────────────────────
         if len(findings) < max_pages:
-            _search_wikipedia(
-                page, query, query_keywords, findings, seen_urls,
-                max_to_add=max_pages - len(findings),
-            )
+            for q in queries:
+                if len(findings) >= max_pages:
+                    break
+                q_keywords = _extract_query_keywords(q)
+                _search_wikipedia(
+                    page, q, q_keywords, findings, seen_urls,
+                    max_to_add=max_pages - len(findings),
+                )
 
         # ── Stage 3: GitHub (if needed) ──────────────────────────
         if len(findings) < max_pages:
-            _search_github(
-                page, simplified_query, query_keywords, findings, seen_urls,
-                max_to_add=max_pages - len(findings),
-            )
+            for q in queries:
+                if len(findings) >= max_pages:
+                    break
+                simplified_q = " ".join(
+                    [w for w in re.findall(r"[a-zA-Z0-9]+", q) if w.lower() not in STOP_WORDS]
+                )
+                if not simplified_q:
+                    simplified_q = q
+                q_keywords = _extract_query_keywords(q)
+                _search_github(
+                    page, simplified_q, q_keywords, findings, seen_urls,
+                    max_to_add=max_pages - len(findings),
+                )
 
         # ── Stage 4: arXiv (if needed) ───────────────────────────
         if len(findings) < max_pages:
-            _search_arxiv(
-                page, simplified_query, query_keywords, findings, seen_urls,
-                max_to_add=max_pages - len(findings),
-            )
+            for q in queries:
+                if len(findings) >= max_pages:
+                    break
+                simplified_q = " ".join(
+                    [w for w in re.findall(r"[a-zA-Z0-9]+", q) if w.lower() not in STOP_WORDS]
+                )
+                if not simplified_q:
+                    simplified_q = q
+                q_keywords = _extract_query_keywords(q)
+                _search_arxiv(
+                    page, simplified_q, q_keywords, findings, seen_urls,
+                    max_to_add=max_pages - len(findings),
+                )
 
         browser.close()
 
