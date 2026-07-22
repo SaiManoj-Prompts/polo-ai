@@ -12,7 +12,8 @@ def generate_report(query: str, findings: list) -> tuple[str, str]:
     Returns:
         Tuple of (markdown_string, json_string).
     """
-    has_findings = bool(findings)
+    is_insufficient = len(findings) == 1 and (not findings[0].get("url") or findings[0].get("title") == "Insufficient results")
+    has_findings = bool(findings) and not is_insufficient
     status = "Complete - Sources compiled." if has_findings else "Incomplete - insufficient sources found."
     
     # 1. Build JSON Dictionary
@@ -61,7 +62,7 @@ def generate_report(query: str, findings: list) -> tuple[str, str]:
                 report_dict["sources_list"].append({"title": title, "url": url})
             
     else:
-        md_lines.append("No findings were collected for this task.")
+        md_lines.append("No relevant sources were found for this query.")
         
     markdown_str = "\n".join(md_lines)
     json_str = json.dumps(report_dict, indent=2)
