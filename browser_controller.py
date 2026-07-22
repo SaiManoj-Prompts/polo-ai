@@ -88,7 +88,7 @@ def _extract_query_keywords(query: str) -> set:
 
 def _is_career_query(query_keywords: set) -> bool:
     """Check if the query is related to jobs, careers, or internships."""
-    career_terms = {"internship", "job", "jobs", "hiring", "career", "position", "intern"}
+    career_terms = {"internship", "internships", "job", "jobs", "hiring", "career", "position", "intern", "interns"}
     return bool(query_keywords & career_terms)
 
 
@@ -464,6 +464,88 @@ def _search_indeed(page, query, findings, seen_urls, max_to_add=3):
         pass
 
 
+def _search_usajobs(page, query, findings, seen_urls, max_to_add=3):
+    """Search USAJobs.gov for federal jobs and add relevant findings."""
+    added = 0
+    search_url = (
+        "https://www.usajobs.gov/Search/Results?k="
+        + urllib.parse.quote_plus(query)
+    )
+
+    try:
+        page.goto(search_url, timeout=PAGE_TIMEOUT_MS, wait_until="domcontentloaded")
+        try:
+            # Wait for results to render since USAJobs is a single-page app
+            page.wait_for_selector("div#search-results .page-section", timeout=5000)
+        except Exception:
+            pass
+    except Exception:
+        return
+
+    try:
+        job_cards = page.query_selector_all("div#search-results .page-section")
+        for card in job_cards:
+            if added >= max_to_add:
+                break
+                
+            title_el = card.query_selector("a.no-underline")
+            if not title_el:
+                continue
+                
+            href = title_el.get_attribute("href")
+            if not href or "/job/" not in href:
+                continue
+                
+            agency_el = card.query_selector("strong")
+            loc_el = card.query_selector("div.grid > div:nth-child(1) > div:nth-child(2)")
+            snippet_el = card.query_selector("div.grid > div:nth-child(2)")
+            
+            full_url = "https://www.usajobs.gov" + href if href.startswith("/") else (href if href else search_url)
+            
+            title = (title_el.inner_text() if title_el else "").strip()
+            agency = (agency_el.inner_text() if agency_el else "Unknown Agency").strip()
+            location = (loc_el.inner_text() if loc_el else "Unknown Location").strip()
+            snippet_text = (snippet_el.inner_text() if snippet_el else "").strip()
+            if title and snippet_text:
+                # RELEVANCE FILTER
+                query_kws = _extract_query_keywords(query)
+                ignore_kws = {"job", "jobs", "hiring", "career", "position", 
+                              "government", "federal", "united", "states", "usa", "us"}
+                target_kws = query_kws - ignore_kws
+                
+                if target_kws:
+                    import re
+                    combined_text = f"{title} {agency} {location} {snippet_text}".lower()
+                    combined_words = set(re.findall(r"[a-z0-9]+", combined_text))
+                    matched_kws = target_kws.intersection(combined_words)
+                    
+                    intern_terms = {"intern", "interns", "internship", "internships"}
+                    is_intern_query = bool(target_kws.intersection(intern_terms))
+                    if is_intern_query and combined_words.intersection(intern_terms):
+                        matched_kws.add("internship") # ensure it counts as matched
+                        
+                    if not matched_kws:
+                        continue  # No target keywords matched
+                        
+                    # Strict check: If user asked for intern/internship, the card MUST contain it
+                    if is_intern_query and not combined_words.intersection(intern_terms):
+                        continue
+                        
+                    generic_roles = {"analyst", "specialist", "manager", "engineer", "assistant", "technician", "officer", "clerk", "director"}
+                    # Reject if it only matched a generic role word, but the user asked for a specific type
+                    if all(kw in generic_roles for kw in matched_kws) and not all(kw in generic_roles for kw in target_kws):
+                        continue
+                        
+                normalized = full_url.rstrip('/')
+                if normalized not in seen_urls:
+                    seen_urls.add(normalized)
+                    final_snippet = f"Agency: {agency} | Location: {location}\n{snippet_text}"
+                    findings.append({"title": title, "url": full_url, "snippet": final_snippet})
+                    added += 1
+    except Exception:
+        pass
+
+
 def _search_arxiv(page, query, query_keywords, findings, seen_urls, max_to_add=1):
     """Search arXiv papers and add relevant findings."""
     added = 0
@@ -553,7 +635,20 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES) -> list[dict]:
 
         page = context.new_page()
 
-        # ── Stage 1: Mojeek ──────────────────────────────────────
+        # ── Stage 1.0: USAJobs (Career queries only) ─────────────
+        if _is_career_query(query_keywords):
+            usajobs_page = None
+            try:
+                usajobs_page = context.new_page()
+                _search_usajobs(
+                    usajobs_page, simplified_query, findings, seen_urls,
+                    max_to_add=min(3, max_pages),
+                )
+            finally:
+                if usajobs_page:
+                    usajobs_page.close()
+
+        # ── Stage 1.1: Mojeek ──────────────────────────────────────
         search_url = (
             "https://www.mojeek.com/search?q="
             + urllib.parse.quote_plus(query)
