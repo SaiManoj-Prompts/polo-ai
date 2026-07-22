@@ -86,6 +86,12 @@ def _extract_query_keywords(query: str) -> set:
     return {w for w in words if w not in STOP_WORDS and len(w) > 1}
 
 
+def _is_career_query(query_keywords: set) -> bool:
+    """Check if the query is related to jobs, careers, or internships."""
+    career_terms = {"internship", "job", "jobs", "hiring", "career", "position", "intern"}
+    return bool(query_keywords & career_terms)
+
+
 def _is_title_relevant(title: str, query_keywords: set) -> bool:
     """Check if a page title is relevant to the query and not junk."""
     title_lower = title.lower()
@@ -409,6 +415,55 @@ def _search_github(page, query, query_keywords, findings, seen_urls, max_to_add=
         pass
 
 
+def _search_indeed(page, query, findings, seen_urls, max_to_add=3):
+    """Search Indeed for jobs/internships and add relevant findings."""
+    added = 0
+    search_url = (
+        "https://www.indeed.com/jobs?q="
+        + urllib.parse.quote_plus(query)
+        + "&l=United+States"
+    )
+
+    try:
+        page.goto(search_url, timeout=PAGE_TIMEOUT_MS, wait_until="domcontentloaded")
+        page.wait_for_timeout(2000)  # Brief wait for JS rendering
+    except Exception:
+        return
+
+    try:
+        job_cards = page.query_selector_all("div.job_seen_beacon, td.resultContent")
+        for card in job_cards:
+            if added >= max_to_add:
+                break
+                
+            title_el = card.query_selector("h2.jobTitle span[title], h2.jobTitle a")
+            company_el = card.query_selector('span[data-testid="company-name"]')
+            loc_el = card.query_selector('div[data-testid="text-location"]')
+            snippet_els = card.query_selector_all("ul > li, div.jobMetaDataGroup")
+            
+            # Use Indeed link if we can find one, else just the search URL
+            link_el = card.query_selector("h2.jobTitle a")
+            href = link_el.get_attribute("href") if link_el else ""
+            full_url = "https://www.indeed.com" + href if href.startswith("/") else (href if href else search_url)
+            
+            title = (title_el.inner_text() if title_el else "").strip()
+            company = (company_el.inner_text() if company_el else "Unknown Company").strip()
+            location = (loc_el.inner_text() if loc_el else "Unknown Location").strip()
+            
+            snippets = [el.inner_text().strip() for el in snippet_els if el.inner_text().strip()]
+            snippet_text = " ".join(snippets)
+            
+            if title and snippet_text:
+                normalized = full_url.rstrip('/')
+                if normalized not in seen_urls:
+                    seen_urls.add(normalized)
+                    final_snippet = f"Company: {company} | Location: {location}\n{snippet_text}"
+                    findings.append({"title": title, "url": full_url, "snippet": final_snippet})
+                    added += 1
+    except Exception:
+        pass
+
+
 def _search_arxiv(page, query, query_keywords, findings, seen_urls, max_to_add=1):
     """Search arXiv papers and add relevant findings."""
     added = 0
@@ -534,6 +589,13 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES) -> list[dict]:
 
         except Exception:
             pass  # Mojeek failed entirely — proceed to fallbacks
+
+        # ── Stage 1.5: Indeed (Career queries only) ──────────────
+        if len(findings) < max_pages and _is_career_query(query_keywords):
+            _search_indeed(
+                page, simplified_query, findings, seen_urls,
+                max_to_add=max_pages - len(findings),
+            )
 
         # ── Stage 2: Wikipedia (if needed) ───────────────────────
         if len(findings) < max_pages:
