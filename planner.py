@@ -7,6 +7,30 @@ from typing import Dict, Any
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL_NAME = "llama3.2"
 
+def clean_text(item) -> str:
+    if not item:
+        return ""
+    if isinstance(item, str):
+        text = item.strip()
+    elif isinstance(item, dict):
+        parts = []
+        for k, v in item.items():
+            if not v:
+                parts.append(str(k).strip())
+            else:
+                if str(k).lower() in ['query', 'step', 'description', 'text', 'action']:
+                    parts.append(str(v).strip())
+                else:
+                    parts.append(f"{str(k).strip()}: {str(v).strip()}")
+        text = " ".join(parts)
+    elif isinstance(item, list):
+        text = " ".join(clean_text(i) for i in item)
+    else:
+        text = str(item).strip()
+        
+    text = re.sub(r'^(?i:step\s*\d+[\.\:\)]*\s*|\d+[\.\:\)]\s*)', '', text)
+    return text.strip()
+
 def generate_plan(query: str) -> Dict[str, Any]:
     """
     Generates a 3 to 6 step research plan, 1 to 3 search queries, and a category using local Ollama.
@@ -58,7 +82,9 @@ Do not include any explanation or markdown code blocks, just the raw JSON object
         steps = parsed.get("plan", [])
         if not isinstance(steps, list) or not (3 <= len(steps) <= 8):
             raise ValueError(f"Invalid plan steps: {steps}")
-        steps = [str(s).strip() for s in steps if str(s).strip()]
+        
+        cleaned_steps = [clean_text(s) for s in steps]
+        steps = [s for s in cleaned_steps if s]
         
         # Validate queries
         raw_queries = parsed.get("queries", [])
@@ -72,7 +98,7 @@ Do not include any explanation or markdown code blocks, just the raw JSON object
             if len(validated_queries) >= 3:
                 break
                 
-            q_str = str(q).strip().strip('"\'')
+            q_str = clean_text(q).strip('"\'')
             if not q_str or len(q_str) > 60:
                 continue
                 
