@@ -12,6 +12,32 @@ st.set_page_config(
     layout="wide",
 )
 
+st.markdown("""
+<style>
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 1rem;
+    }
+    html, body, [class*="css"] {
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    
+    .st-key-execute_task .stButton button {
+        background-color: #198754 !important;
+        border-color: #198754 !important;
+        color: #ffffff !important;
+    }
+    
+    .st-key-execute_task .stButton button:hover,
+    .st-key-execute_task .stButton button:active,
+    .st-key-execute_task .stButton button:focus {
+        background-color: #157347 !important;
+        border-color: #146c43 !important;
+        color: #ffffff !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # Ensure DB is initialized
 db_manager.init_db()
 
@@ -45,7 +71,7 @@ st.divider()
 # ── Task input ───────────────────────────────────────────────────────────
 user_input = st.text_area(
     "What would you like Polo AI to research?",
-    height=120,
+    height=80,
     placeholder="e.g. Compare the latest electric-vehicle battery technologies…",
 )
 
@@ -53,7 +79,7 @@ user_input = st.text_area(
 btn_col1, btn_col2 = st.columns([3, 1])
 
 with btn_col1:
-    execute_clicked = st.button("🚀 Execute Task", use_container_width=True)
+    execute_clicked = st.button("🚀 Execute Task", use_container_width=True, type="primary", key="execute_task")
 
 with btn_col2:
     reset_clicked = st.button("🔄 Reset", use_container_width=True)
@@ -100,18 +126,20 @@ elif st.session_state.task:
             queries = ai_data.get("queries", [])
             source = ai_data.get("source", "Unknown")
 
-        with st.expander("🧠 AI Research Plan", expanded=True):
-            for i, step in enumerate(plan_steps, 1):
-                st.markdown(f"{i}. {step}")
+        plan_col, search_col = st.columns(2)
+        
+        with plan_col:
+            with st.expander("🧠 AI Research Plan", expanded=True):
+                markdown_steps = "  \n".join([f"{i}. {step}" for i, step in enumerate(plan_steps, 1)])
+                st.markdown(markdown_steps)
                 
         if queries:
-            with st.expander("🔍 Search strategy used", expanded=True):
-                st.markdown(f"**Category:** `{category}`")
-                source_color = "green" if source == "Ollama" else "orange"
-                st.markdown(f"**Source:** :{source_color}[{source}]")
-                st.markdown("**Queries:**")
-                for q in queries:
-                    st.markdown(f"- {q}")
+            with search_col:
+                with st.expander("🔍 Search strategy used", expanded=True):
+                    source_color = "green" if source == "Ollama" else "orange"
+                    st.markdown(f"**Category:** `{category}`  \n**Source:** :{source_color}[{source}]")
+                    q_list = "  \n".join([f"- {q}" for q in queries])
+                    st.markdown(f"**Queries:**  \n{q_list}")
 else:
     st.info("Enter a research task above and click **Execute Task** to begin.")
 
@@ -141,7 +169,7 @@ if st.session_state.running:
             else:
                 lines.append(f"⬜  {lbl}")
 
-        step_container.markdown("\n\n".join(lines))
+        step_container.markdown("  \n".join(lines))
         progress_bar.progress(
             int((i / len(STEPS)) * 100),
             text=f"{emoji} {label}…",
@@ -170,7 +198,7 @@ if st.session_state.running:
 
     # Final state: all done
     final_lines = [f"✅  ~~{lbl}~~ — done" for (_, lbl) in STEPS]
-    step_container.markdown("\n\n".join(final_lines))
+    step_container.markdown("  \n".join(final_lines))
     progress_bar.progress(100, text="✅ Research complete!")
 
     # Save to database
@@ -188,53 +216,18 @@ if st.session_state.running:
 st.divider()
 
 # ── Placeholder sections ────────────────────────────────────────────────
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.subheader("📋 Task Progress")
-    if st.session_state.step_index >= 0 and not st.session_state.running:
-        # Show final completed checklist
-        for emoji, label in STEPS:
-            if STEPS.index((emoji, label)) <= st.session_state.step_index:
-                st.markdown(f"✅  {label}")
-            else:
-                st.markdown(f"⬜  {label}")
-    else:
-        st.info("Nothing here yet.")
-
-with col2:
-    st.subheader("📄 Research Findings")
-    if st.session_state.findings:
-        for idx, finding in enumerate(st.session_state.findings, 1):
-            if not finding.get('url') or finding.get('title') == 'Insufficient results':
-                st.warning("⚠️ No relevant sources found for this query. Try rephrasing your request or ask about a different topic.")
-            else:
-                st.markdown(f"**{idx}. {finding['title']}**")
-                st.markdown(f"🔗 [{finding['url']}]({finding['url']})")
+st.subheader("📄 Research Findings")
+if st.session_state.findings:
+    for idx, finding in enumerate(st.session_state.findings, 1):
+        if not finding.get('url') or finding.get('title') == 'Insufficient results':
+            st.warning("⚠️ No relevant sources found for this query. Try rephrasing your request or ask about a different topic.")
+        else:
+            with st.container(border=True):
+                st.markdown(f"#### {idx}. {finding['title']}")
+                st.markdown(f"[{finding['url']}]({finding['url']})")
                 st.caption(finding["snippet"])
-                if idx < len(st.session_state.findings):
-                    st.markdown("---")
-    else:
-        st.info("Nothing here yet.")
-
-with col3:
-    st.subheader("📚 Task History")
-    history = db_manager.get_all_tasks()
-    if history:
-        for task in history:
-            query_preview = task['query'][:30] + ('...' if len(task['query']) > 30 else '')
-            with st.expander(f"Task: {query_preview} ({task['created_at']})"):
-                st.write(f"**Status:** {task['status']}")
-                if task.get('findings'):
-                    for f in task['findings']:
-                        if not f.get('url') or f.get('title') == 'Insufficient results':
-                            st.warning("⚠️ No relevant sources found for this query.")
-                        else:
-                            st.markdown(f"- [{f['title']}]({f['url']})")
-                else:
-                    st.write("No findings.")
-    else:
-        st.info("Nothing here yet.")
+else:
+    st.info("Nothing here yet.")
 
 st.divider()
 
@@ -243,9 +236,6 @@ if st.session_state.step_index >= 0 and not st.session_state.running:
     st.header("📄 Final Research Report")
     md_report, json_report = generate_report(st.session_state.task, st.session_state.findings)
     
-    st.markdown(md_report)
-    
-    st.markdown("### Download Report")
     dl_col1, dl_col2 = st.columns(2)
     with dl_col1:
         st.download_button(
@@ -263,3 +253,25 @@ if st.session_state.step_index >= 0 and not st.session_state.running:
             mime="application/json",
             use_container_width=True
         )
+        
+    st.markdown(md_report)
+    
+    st.divider()
+    
+    with st.expander("📚 Task History", expanded=False):
+        history = db_manager.get_all_tasks()
+        if history:
+            for task in history:
+                query_preview = task['query'][:40] + ('...' if len(task['query']) > 40 else '')
+                st.markdown(f"**Task:** {query_preview}  \n**Status:** {task['status']} | **Date:** {task['created_at']}")
+                if task.get('findings'):
+                    for f in task['findings']:
+                        if not f.get('url') or f.get('title') == 'Insufficient results':
+                            st.caption("⚠️ No relevant sources found.")
+                        else:
+                            st.caption(f"- [{f['title']}]({f['url']})")
+                else:
+                    st.caption("No findings.")
+                st.markdown("---")
+        else:
+            st.info("Nothing here yet.")
