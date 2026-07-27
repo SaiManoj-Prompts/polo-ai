@@ -123,7 +123,7 @@ def _is_snippet_relevant(snippet: str, query: str, query_keywords: set) -> bool:
         return False
 
     snippet_lower = snippet.lower()
-    
+
     # 1. Count keyword overlap
     snippet_words = set(re.findall(r"[a-zA-Z0-9]+", snippet_lower))
     match_count = 0
@@ -132,10 +132,10 @@ def _is_snippet_relevant(snippet: str, query: str, query_keywords: set) -> bool:
             if qw == tw or (len(qw) >= 4 and len(tw) >= 4 and (qw.startswith(tw) or tw.startswith(qw))):
                 match_count += 1
                 break  # count each query keyword at most once
-    
+
     comparison_keywords = {"compare", "best", "vs", "frameworks", "tools", "alternatives"}
     is_comparison = bool(query_keywords & comparison_keywords)
-    
+
     # 2. Check keyword count threshold
     if is_comparison and match_count < 3:
         return False
@@ -148,13 +148,13 @@ def _is_snippet_relevant(snippet: str, query: str, query_keywords: set) -> bool:
         caps = re.findall(r'\b[A-Z][a-zA-Z0-9]*\b', snippet)
         # Find words at start of sentences
         starts = re.findall(r'(?:^|[.!?]\s+)([A-Z][a-zA-Z0-9]*)\b', snippet)
-        
+
         # Proper nouns = caps minus sentence starters, excluding query keywords
         proper_nouns = {p for p in set(caps) - set(starts) if p.lower() not in query_keywords and len(p) > 2}
-        
+
         # CamelCase / internal caps words, excluding query keywords
         camel_cases = {c for c in re.findall(r'\b[a-zA-Z]*[A-Z][a-z]+[A-Z][a-zA-Z]*\b', snippet) if c.lower() not in query_keywords}
-        
+
         if not proper_nouns and not camel_cases:
             return False
 
@@ -183,7 +183,7 @@ def _extract_text_snippet(page, max_length: int = SNIPPET_LENGTH) -> str:
     try:
         paragraphs = page.locator("p").all_inner_texts()
         valid_paragraphs = []
-        
+
         for p in paragraphs:
             cleaned = re.sub(r"\s+", " ", p).strip()
             # Require at least 60 characters for a substantive paragraph
@@ -192,15 +192,15 @@ def _extract_text_snippet(page, max_length: int = SNIPPET_LENGTH) -> str:
             if _is_noisy_text(cleaned):
                 continue
             valid_paragraphs.append(cleaned)
-            
+
         if not valid_paragraphs:
             return ""
-            
+
         # The longest paragraph is almost always the main article content,
         # avoiding concatenated lists of links or headers.
         best_paragraph = max(valid_paragraphs, key=len)
         raw_text = best_paragraph
-            
+
         # Truncate to max length
         if len(raw_text) > max_length:
             return raw_text[:max_length] + "…"
@@ -221,7 +221,7 @@ def _block_forms_and_submissions(page):
         pass  # Page might not support JS injection; that's okay
 
 
-def _visit_and_collect(page, url, query, query_keywords, findings, seen_urls):
+def _visit_and_collect(page, url, query, query_keywords, findings, seen_urls, attempt_state=None):
     """Visit a URL, extract content, and append to findings if relevant.
 
     Returns True if a finding was added, False otherwise.
@@ -229,11 +229,16 @@ def _visit_and_collect(page, url, query, query_keywords, findings, seen_urls):
     normalized = url.rstrip('/')
     if normalized in seen_urls:
         return False
-        
+
     for pattern in IRRELEVANT_URL_PATTERNS:
         if pattern in normalized.lower():
             return False
-            
+
+    if attempt_state:
+        if attempt_state["count"][0] >= attempt_state["max"] or attempt_state["count"][0] >= attempt_state["global_max"]:
+            return False
+        attempt_state["count"][0] += 1
+
     seen_urls.add(normalized)
 
     try:
@@ -245,7 +250,7 @@ def _visit_and_collect(page, url, query, query_keywords, findings, seen_urls):
         snippet = _extract_text_snippet(page)
         if not _is_snippet_relevant(snippet, query, query_keywords):
             return False
-            
+
         findings.append({"title": title, "url": url, "snippet": snippet})
         return True
     except Exception:
@@ -308,7 +313,7 @@ def _extract_search_links(page) -> list[tuple[str, str]]:
 
 # ── Fallback source helpers ──────────────────────────────────────────────
 
-def _search_wikipedia(page, query, query_keywords, findings, seen_urls, max_to_add=2):
+def _search_wikipedia(page, query, query_keywords, findings, seen_urls, max_to_add=2, attempt_state=None):
     """Search Wikipedia and add relevant article findings."""
     added = 0
     search_url = (
@@ -327,6 +332,10 @@ def _search_wikipedia(page, query, query_keywords, findings, seen_urls, max_to_a
     if "/wiki/" in current_url and "index.php" not in current_url:
         normalized = current_url.rstrip('/')
         if normalized not in seen_urls:
+            if attempt_state:
+                if attempt_state["count"][0] >= attempt_state["max"] or attempt_state["count"][0] >= attempt_state["global_max"]:
+                    return
+                attempt_state["count"][0] += 1
             seen_urls.add(normalized)
             title = page.title() or "(No title)"
             if _is_title_relevant(title, query_keywords):
@@ -355,13 +364,13 @@ def _search_wikipedia(page, query, query_keywords, findings, seen_urls, max_to_a
         for url in urls_to_visit:
             if added >= max_to_add:
                 break
-            if _visit_and_collect(page, url, query, query_keywords, findings, seen_urls):
+            if _visit_and_collect(page, url, query, query_keywords, findings, seen_urls, attempt_state=attempt_state):
                 added += 1
     except Exception:
         pass
 
 
-def _search_github(page, query, query_keywords, findings, seen_urls, max_to_add=2):
+def _search_github(page, query, query_keywords, findings, seen_urls, max_to_add=2, attempt_state=None):
     """Search GitHub repositories and add relevant findings."""
     # GitHub navigation paths to skip
     github_nav = {
@@ -409,13 +418,13 @@ def _search_github(page, query, query_keywords, findings, seen_urls, max_to_add=
         for url in repo_urls:
             if added >= max_to_add:
                 break
-            if _visit_and_collect(page, url, query, query_keywords, findings, seen_urls):
+            if _visit_and_collect(page, url, query, query_keywords, findings, seen_urls, attempt_state=attempt_state):
                 added += 1
     except Exception:
         pass
 
 
-def _search_indeed(page, query, findings, seen_urls, max_to_add=3):
+def _search_indeed(page, query, findings, seen_urls, max_to_add=3, attempt_state=None):
     """Search Indeed for jobs/internships and add relevant findings."""
     added = 0
     search_url = (
@@ -435,7 +444,7 @@ def _search_indeed(page, query, findings, seen_urls, max_to_add=3):
         for card in job_cards:
             if added >= max_to_add:
                 break
-                
+
             title_el = card.query_selector("h2.jobTitle span[title], h2.jobTitle a")
             company_el = card.query_selector('span[data-testid="company-name"]')
             loc_el = card.query_selector('div[data-testid="text-location"]')
@@ -445,17 +454,22 @@ def _search_indeed(page, query, findings, seen_urls, max_to_add=3):
             link_el = card.query_selector("h2.jobTitle a")
             href = link_el.get_attribute("href") if link_el else ""
             full_url = "https://www.indeed.com" + href if href.startswith("/") else (href if href else search_url)
-            
+
             title = (title_el.inner_text() if title_el else "").strip()
             company = (company_el.inner_text() if company_el else "Unknown Company").strip()
             location = (loc_el.inner_text() if loc_el else "Unknown Location").strip()
-            
+
             snippets = [el.inner_text().strip() for el in snippet_els if el.inner_text().strip()]
             snippet_text = " ".join(snippets)
-            
+
             if title and snippet_text:
                 normalized = full_url.rstrip('/')
                 if normalized not in seen_urls:
+                    if attempt_state:
+                        if attempt_state["count"][0] >= attempt_state["max"] or attempt_state["count"][0] >= attempt_state["global_max"]:
+                            break
+                        attempt_state["count"][0] += 1
+
                     seen_urls.add(normalized)
                     final_snippet = f"Company: {company} | Location: {location}\n{snippet_text}"
                     findings.append({"title": title, "url": full_url, "snippet": final_snippet})
@@ -464,7 +478,7 @@ def _search_indeed(page, query, findings, seen_urls, max_to_add=3):
         pass
 
 
-def _search_usajobs(page, query, findings, seen_urls, max_to_add=3):
+def _search_usajobs(page, query, findings, seen_urls, max_to_add=3, attempt_state=None):
     """Search USAJobs.gov for federal jobs and add relevant findings."""
     added = 0
     search_url = (
@@ -487,21 +501,21 @@ def _search_usajobs(page, query, findings, seen_urls, max_to_add=3):
         for card in job_cards:
             if added >= max_to_add:
                 break
-                
+
             title_el = card.query_selector("a.no-underline")
             if not title_el:
                 continue
-                
+
             href = title_el.get_attribute("href")
             if not href or "/job/" not in href:
                 continue
-                
+
             agency_el = card.query_selector("strong")
             loc_el = card.query_selector("div.grid > div:nth-child(1) > div:nth-child(2)")
             snippet_el = card.query_selector("div.grid > div:nth-child(2)")
-            
+
             full_url = "https://www.usajobs.gov" + href if href.startswith("/") else (href if href else search_url)
-            
+
             title = (title_el.inner_text() if title_el else "").strip()
             agency = (agency_el.inner_text() if agency_el else "Unknown Agency").strip()
             location = (loc_el.inner_text() if loc_el else "Unknown Location").strip()
@@ -509,16 +523,16 @@ def _search_usajobs(page, query, findings, seen_urls, max_to_add=3):
             if title and snippet_text:
                 # RELEVANCE FILTER
                 query_kws = _extract_query_keywords(query)
-                ignore_kws = {"job", "jobs", "hiring", "career", "position", 
+                ignore_kws = {"job", "jobs", "hiring", "career", "position",
                               "government", "federal", "united", "states", "usa", "us"}
                 target_kws = query_kws - ignore_kws
-                
+
                 if target_kws:
                     import re
                     combined_text = f"{title} {agency} {location} {snippet_text}".lower()
                     combined_words = set(re.findall(r"[a-z0-9]+", combined_text))
                     matched_kws = target_kws.intersection(combined_words)
-                    
+
                     intern_terms = {"intern", "interns", "internship", "internships"}
                     is_intern_query = bool(target_kws.intersection(intern_terms))
                     if is_intern_query and combined_words.intersection(intern_terms):
@@ -535,9 +549,14 @@ def _search_usajobs(page, query, findings, seen_urls, max_to_add=3):
                     # Reject if it only matched a generic role word, but the user asked for a specific type
                     if all(kw in generic_roles for kw in matched_kws) and not all(kw in generic_roles for kw in target_kws):
                         continue
-                        
+
                 normalized = full_url.rstrip('/')
                 if normalized not in seen_urls:
+                    if attempt_state:
+                        if attempt_state["count"][0] >= attempt_state["max"] or attempt_state["count"][0] >= attempt_state["global_max"]:
+                            break
+                        attempt_state["count"][0] += 1
+
                     seen_urls.add(normalized)
                     final_snippet = f"Agency: {agency} | Location: {location}\n{snippet_text}"
                     findings.append({"title": title, "url": full_url, "snippet": final_snippet})
@@ -546,7 +565,7 @@ def _search_usajobs(page, query, findings, seen_urls, max_to_add=3):
         pass
 
 
-def _search_arxiv(page, query, query_keywords, findings, seen_urls, max_to_add=1):
+def _search_arxiv(page, query, query_keywords, findings, seen_urls, max_to_add=1, attempt_state=None):
     """Search arXiv papers and add relevant findings."""
     added = 0
     search_url = (
@@ -575,7 +594,7 @@ def _search_arxiv(page, query, query_keywords, findings, seen_urls, max_to_add=1
         for url in abs_urls:
             if added >= max_to_add:
                 break
-            if _visit_and_collect(page, url, query, query_keywords, findings, seen_urls):
+            if _visit_and_collect(page, url, query, query_keywords, findings, seen_urls, attempt_state=attempt_state):
                 added += 1
     except Exception:
         pass
@@ -595,7 +614,7 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
 
     Args:
         query: The user's research question.
-        max_pages: Maximum number of pages to visit (default 5).
+        max_pages: Maximum number of bounded research-candidate evaluations (default 5).
         queries: List of validated queries for bounded multi-query search.
         category: AI-derived category.
 
@@ -605,10 +624,11 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
     max_pages = min(max_pages, MAX_PAGES)  # enforce hard cap
     findings = []
     seen_urls = set()
-    
+    attempts_count = [0]
+
     if queries is None:
         queries = [query]
-        
+
     is_career = False
     if category == "career":
         is_career = True
@@ -644,29 +664,36 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
             usajobs_page = None
             try:
                 usajobs_page = context.new_page()
-                for q in queries:
+                for i, q in enumerate(queries):
+                    q_max = max_pages - (len(queries) - 1 - i)
+                    if attempts_count[0] >= max_pages or attempts_count[0] >= q_max:
+                        continue
                     if len(findings) >= min(3, max_pages):
                         break
-                    
+
                     simplified_q = " ".join(
                         [w for w in re.findall(r"[a-zA-Z0-9]+", q) if w.lower() not in STOP_WORDS]
                     )
                     if not simplified_q:
                         simplified_q = q
-                    
+
                     _search_usajobs(
                         usajobs_page, simplified_q, findings, seen_urls,
                         max_to_add=min(3, max_pages) - len(findings),
+                        attempt_state={"count": attempts_count, "max": q_max, "global_max": max_pages}
                     )
             finally:
                 if usajobs_page:
                     usajobs_page.close()
 
         # ── Stage 1.1: Mojeek ──────────────────────────────────────
-        for q in queries:
+        for i, q in enumerate(queries):
+            q_max = max_pages - (len(queries) - 1 - i)
+            if attempts_count[0] >= max_pages or attempts_count[0] >= q_max:
+                continue
             if len(findings) >= max_pages:
                 break
-                
+
             q_keywords = _extract_query_keywords(q)
             search_url = (
                 "https://www.mojeek.com/search?q="
@@ -697,16 +724,21 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
                     filtered.sort(key=_relevance_score, reverse=True)
 
                     for url, _link_text in filtered[:10]:
+                        if attempts_count[0] >= max_pages or attempts_count[0] >= q_max:
+                            break
                         if len(findings) >= max_pages:
                             break
-                        _visit_and_collect(page, url, q, q_keywords, findings, seen_urls)
+                        _visit_and_collect(page, url, q, q_keywords, findings, seen_urls, attempt_state={"count": attempts_count, "max": q_max, "global_max": max_pages})
 
             except Exception:
                 pass  # Mojeek failed entirely — proceed to next query
 
         # ── Stage 1.5: Indeed (Career queries only) ──────────────
         if len(findings) < max_pages and is_career:
-            for q in queries:
+            for i, q in enumerate(queries):
+                q_max = max_pages - (len(queries) - 1 - i)
+                if attempts_count[0] >= max_pages or attempts_count[0] >= q_max:
+                    continue
                 if len(findings) >= max_pages:
                     break
                 simplified_q = " ".join(
@@ -714,26 +746,34 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
                 )
                 if not simplified_q:
                     simplified_q = q
-                    
+
                 _search_indeed(
                     page, simplified_q, findings, seen_urls,
                     max_to_add=max_pages - len(findings),
+                    attempt_state={"count": attempts_count, "max": q_max, "global_max": max_pages}
                 )
 
         # ── Stage 2: Wikipedia (if needed) ───────────────────────
         if len(findings) < max_pages:
-            for q in queries:
+            for i, q in enumerate(queries):
+                q_max = max_pages - (len(queries) - 1 - i)
+                if attempts_count[0] >= max_pages or attempts_count[0] >= q_max:
+                    continue
                 if len(findings) >= max_pages:
                     break
                 q_keywords = _extract_query_keywords(q)
                 _search_wikipedia(
                     page, q, q_keywords, findings, seen_urls,
                     max_to_add=max_pages - len(findings),
+                    attempt_state={"count": attempts_count, "max": q_max, "global_max": max_pages}
                 )
 
         # ── Stage 3: GitHub (if needed) ──────────────────────────
         if len(findings) < max_pages:
-            for q in queries:
+            for i, q in enumerate(queries):
+                q_max = max_pages - (len(queries) - 1 - i)
+                if attempts_count[0] >= max_pages or attempts_count[0] >= q_max:
+                    continue
                 if len(findings) >= max_pages:
                     break
                 simplified_q = " ".join(
@@ -745,11 +785,15 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
                 _search_github(
                     page, simplified_q, q_keywords, findings, seen_urls,
                     max_to_add=max_pages - len(findings),
+                    attempt_state={"count": attempts_count, "max": q_max, "global_max": max_pages}
                 )
 
         # ── Stage 4: arXiv (if needed) ───────────────────────────
         if len(findings) < max_pages:
-            for q in queries:
+            for i, q in enumerate(queries):
+                q_max = max_pages - (len(queries) - 1 - i)
+                if attempts_count[0] >= max_pages or attempts_count[0] >= q_max:
+                    continue
                 if len(findings) >= max_pages:
                     break
                 simplified_q = " ".join(
@@ -761,6 +805,7 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
                 _search_arxiv(
                     page, simplified_q, q_keywords, findings, seen_urls,
                     max_to_add=max_pages - len(findings),
+                    attempt_state={"count": attempts_count, "max": q_max, "global_max": max_pages}
                 )
 
         browser.close()

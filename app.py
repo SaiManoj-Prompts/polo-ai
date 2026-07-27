@@ -21,13 +21,13 @@ st.markdown("""
     html, body, [class*="css"] {
         font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     }
-    
+
     .st-key-execute_task .stButton button {
         background-color: #198754 !important;
         border-color: #198754 !important;
         color: #ffffff !important;
     }
-    
+
     .st-key-execute_task .stButton button:hover,
     .st-key-execute_task .stButton button:active,
     .st-key-execute_task .stButton button:focus {
@@ -114,7 +114,7 @@ if execute_clicked and not user_input.strip():
     st.warning("Please enter a task above to get started.")
 elif st.session_state.task:
     st.success(st.session_state.task)
-    
+
     if st.session_state.get("ai_plan"):
         ai_data = st.session_state.ai_plan
         if isinstance(ai_data, list):
@@ -127,19 +127,20 @@ elif st.session_state.task:
             source = ai_data.get("source", "Unknown")
 
         plan_col, search_col = st.columns(2)
-        
+
         with plan_col:
             with st.expander("🧠 AI Research Plan", expanded=True):
                 markdown_steps = "  \n".join([f"{i}. {step}" for i, step in enumerate(plan_steps, 1)])
                 st.markdown(markdown_steps)
-                
+
         if queries:
             with search_col:
                 with st.expander("🔍 Search strategy used", expanded=True):
-                    source_color = "green" if source == "Ollama" else "orange"
+                    source_color = "green" if "Ollama" in source and "no valid" not in source else "orange"
                     st.markdown(f"**Category:** `{category}`  \n**Source:** :{source_color}[{source}]")
-                    q_list = "  \n".join([f"- {q}" for q in queries])
-                    st.markdown(f"**Queries:**  \n{q_list}")
+                    st.markdown(f"**Original Task:**  \n- {st.session_state.task}")
+                    q_list = "  \n".join([f"{idx+1}. {q}" + (" (Fallback)" if q == st.session_state.task else "") for idx, q in enumerate(queries)])
+                    st.markdown(f"**Validated Search Order:**  \n{q_list}")
 else:
     st.info("Enter a research task above and click **Execute Task** to begin.")
 
@@ -201,11 +202,15 @@ if st.session_state.running:
     step_container.markdown("  \n".join(final_lines))
     progress_bar.progress(100, text="✅ Research complete!")
 
+    ai_data = st.session_state.get("ai_plan", {})
+    q_used = ai_data.get("queries", [st.session_state.task]) if isinstance(ai_data, dict) else [st.session_state.task]
+
     # Save to database
     db_manager.save_task(
         query=st.session_state.task,
         status="Completed",
-        findings=st.session_state.findings
+        findings=st.session_state.findings,
+        queries=q_used
     )
 
     st.session_state.running = False
@@ -235,7 +240,7 @@ st.divider()
 if st.session_state.step_index >= 0 and not st.session_state.running:
     st.header("📄 Final Research Report")
     md_report, json_report = generate_report(st.session_state.task, st.session_state.findings)
-    
+
     dl_col1, dl_col2 = st.columns(2)
     with dl_col1:
         st.download_button(
@@ -253,17 +258,31 @@ if st.session_state.step_index >= 0 and not st.session_state.running:
             mime="application/json",
             use_container_width=True
         )
-        
+
     st.markdown(md_report)
-    
+
     st.divider()
-    
+
     with st.expander("📚 Task History", expanded=False):
         history = db_manager.get_all_tasks()
         if history:
             for task in history:
                 query_preview = task['query'][:40] + ('...' if len(task['query']) > 40 else '')
                 st.markdown(f"**Task:** {query_preview}  \n**Status:** {task['status']} | **Date:** {task['created_at']}")
+
+                try:
+                    import json
+                    if task.get("queries"):
+                        saved_q = json.loads(task["queries"])
+                        if isinstance(saved_q, list):
+                            st.caption(f"**Search Order:** {', '.join(saved_q)}")
+                        else:
+                            st.caption(f"**Search Order:** {task['query']}")
+                    else:
+                        st.caption(f"**Search Order:** {task['query']}")
+                except Exception:
+                    st.caption(f"**Search Order:** {task['query']}")
+
                 if task.get('findings'):
                     for f in task['findings']:
                         if not f.get('url') or f.get('title') == 'Insufficient results':
