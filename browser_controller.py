@@ -48,6 +48,11 @@ IRRELEVANT_TITLE_WORDS = [
     "403 forbidden", "404 not found", "cookie policy",
 ]
 
+OFF_TOPIC_DOMAIN_TERMS = {
+    "blockchain", "crypto", "cryptocurrency", "nft", "defi",
+    "real estate", "healthcare", "medical", "gaming", "marketing"
+}
+
 IRRELEVANT_URL_PATTERNS = [
     "riddle", "joke", "trivia", "puzzle"
 ]
@@ -249,6 +254,15 @@ def _visit_and_collect(page, url, query, query_keywords, findings, seen_urls, at
             return False
         snippet = _extract_text_snippet(page)
         if not _is_snippet_relevant(snippet, query, query_keywords):
+            return False
+
+        # Apply OFF_TOPIC_DOMAIN_TERMS check
+        combined_text = f"{title} {snippet}".lower()
+        candidate_tokens = set(re.findall(r"[a-z0-9]+", combined_text))
+        query_tokens = set(re.findall(r"[a-z0-9]+", query.lower()))
+
+        off_topic_present = OFF_TOPIC_DOMAIN_TERMS.intersection(candidate_tokens)
+        if off_topic_present and not off_topic_present.issubset(query_tokens):
             return False
 
         findings.append({"title": title, "url": url, "snippet": snippet})
@@ -728,6 +742,13 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
                             break
                         if len(findings) >= max_pages:
                             break
+
+                        # Reserve up to 2 bounded research-candidate evaluations for later fallback-source stages
+                        # whenever max_pages is at least 3 and fewer than 2 findings have been collected.
+                        if max_pages >= 3 and len(findings) < 2:
+                            if attempts_count[0] >= max_pages - 2:
+                                break
+
                         _visit_and_collect(page, url, q, q_keywords, findings, seen_urls, attempt_state={"count": attempts_count, "max": q_max, "global_max": max_pages})
 
             except Exception:
@@ -753,22 +774,7 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
                     attempt_state={"count": attempts_count, "max": q_max, "global_max": max_pages}
                 )
 
-        # ── Stage 2: Wikipedia (if needed) ───────────────────────
-        if len(findings) < max_pages:
-            for i, q in enumerate(queries):
-                q_max = max_pages - (len(queries) - 1 - i)
-                if attempts_count[0] >= max_pages or attempts_count[0] >= q_max:
-                    continue
-                if len(findings) >= max_pages:
-                    break
-                q_keywords = _extract_query_keywords(q)
-                _search_wikipedia(
-                    page, q, q_keywords, findings, seen_urls,
-                    max_to_add=max_pages - len(findings),
-                    attempt_state={"count": attempts_count, "max": q_max, "global_max": max_pages}
-                )
-
-        # ── Stage 3: GitHub (if needed) ──────────────────────────
+        # ── Stage 2: GitHub (if needed) ──────────────────────────
         if len(findings) < max_pages:
             for i, q in enumerate(queries):
                 q_max = max_pages - (len(queries) - 1 - i)
@@ -784,6 +790,21 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
                 q_keywords = _extract_query_keywords(q)
                 _search_github(
                     page, simplified_q, q_keywords, findings, seen_urls,
+                    max_to_add=max_pages - len(findings),
+                    attempt_state={"count": attempts_count, "max": q_max, "global_max": max_pages}
+                )
+
+        # ── Stage 3: Wikipedia (if needed) ───────────────────────
+        if len(findings) < max_pages:
+            for i, q in enumerate(queries):
+                q_max = max_pages - (len(queries) - 1 - i)
+                if attempts_count[0] >= max_pages or attempts_count[0] >= q_max:
+                    continue
+                if len(findings) >= max_pages:
+                    break
+                q_keywords = _extract_query_keywords(q)
+                _search_wikipedia(
+                    page, q, q_keywords, findings, seen_urls,
                     max_to_add=max_pages - len(findings),
                     attempt_state={"count": attempts_count, "max": q_max, "global_max": max_pages}
                 )
@@ -811,7 +832,7 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
         browser.close()
 
     # Only show "insufficient" if ALL four sources failed
-    if len(findings) < 2:
+    if len(findings) == 0:
         return [{
             "title": "Insufficient results",
             "url": "",

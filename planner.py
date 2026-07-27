@@ -16,6 +16,12 @@ NON_ANCHOR_TERMS = {
 BAD_PHRASES = ["ignore previous", "system prompt", "instructions", "jailbreak", "execute", "run command", "delete", "password", "token", "api key", "curl", "powershell", "python code"]
 BAD_CHARS = ["{", "}", "[", "]", "```", "\n", "\r", "http", "www.", ".com", ".org"]
 
+OFF_TOPIC_DOMAIN_TERMS = {
+    "robotics", "robot", "autonomous", "autonomy",
+    "blockchain", "crypto", "cryptocurrency", "nft", "defi",
+    "healthcare", "medical", "gaming", "marketing", "real", "estate"
+}
+
 def clean_text(item) -> str:
     if not item:
         return ""
@@ -69,6 +75,10 @@ def _validate_query(candidate: str, original_task: str) -> bool:
 
     orig_tokens = [w for w in re.findall(r'[a-z0-9]+', original_task.lower()) if w not in STOPWORDS]
 
+    off_topic_present = OFF_TOPIC_DOMAIN_TERMS.intersection(set(cand_tokens))
+    if off_topic_present and not off_topic_present.issubset(set(orig_tokens)):
+        return False
+
     cand_anchor_tokens = [w for w in cand_tokens if w not in NON_ANCHOR_TERMS]
     orig_anchor_tokens = [w for w in orig_tokens if w not in NON_ANCHOR_TERMS]
 
@@ -82,6 +92,25 @@ def _validate_query(candidate: str, original_task: str) -> bool:
             return True
 
     return False
+
+def _is_plan_step_on_topic(step: str, original_task: str) -> bool:
+    step_tokens = set(w for w in re.findall(r'[a-z0-9]+', step.lower()) if w not in STOPWORDS)
+    orig_tokens = set(w for w in re.findall(r'[a-z0-9]+', original_task.lower()) if w not in STOPWORDS)
+
+    plan_off_topic_terms = OFF_TOPIC_DOMAIN_TERMS.union(
+        {"gym", "mujoco", "stable", "baselines", "reinforcement"}
+    )
+
+    off_topic_present = plan_off_topic_terms.intersection(step_tokens)
+
+    # Handle 'real' without 'estate'
+    if "real" in off_topic_present and "estate" not in step_tokens:
+        off_topic_present.remove("real")
+
+    if off_topic_present and not off_topic_present.issubset(orig_tokens):
+        return False
+
+    return True
 
 def generate_plan(query: str) -> Dict[str, Any]:
     """
@@ -136,7 +165,12 @@ Do not include any explanation or markdown code blocks, just the raw JSON object
             raise ValueError(f"Invalid plan steps: {steps}")
 
         cleaned_steps = [clean_text(s) for s in steps]
-        steps = [s for s in cleaned_steps if s]
+        valid_steps = [s for s in cleaned_steps if s and _is_plan_step_on_topic(s, query)]
+
+        if len(valid_steps) >= 3:
+            steps = valid_steps
+        else:
+            steps = fallback_plan
 
         # Validate queries
         raw_queries = parsed.get("queries", [])
