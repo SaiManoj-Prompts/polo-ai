@@ -264,8 +264,35 @@ if st.session_state.step_index >= 0 and not st.session_state.running:
     st.divider()
 
     with st.expander("📚 Task History", expanded=False):
+        if "history_clear_success_message" in st.session_state:
+            st.success(st.session_state.pop("history_clear_success_message"))
+
         history = db_manager.get_all_tasks()
         if history:
+            if "confirm_clear_history" not in st.session_state:
+                st.session_state.confirm_clear_history = False
+
+            if not st.session_state.confirm_clear_history:
+                if st.button("🗑️ Clear Task History"):
+                    st.session_state.confirm_clear_history = True
+                    st.rerun()
+            else:
+                st.warning("This permanently deletes all saved tasks and findings. Your current on-screen research session will remain available until you refresh.")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("Confirm Clear History", type="primary"):
+                        try:
+                            deleted_count = db_manager.clear_task_history()
+                            st.session_state.confirm_clear_history = False
+                            st.session_state.history_clear_success_message = f"History cleared! {deleted_count} tasks deleted."
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error clearing history: {e}")
+                with col2:
+                    if st.button("Cancel"):
+                        st.session_state.confirm_clear_history = False
+                        st.rerun()
+
             for task in history:
                 query_preview = task['query'][:40] + ('...' if len(task['query']) > 40 else '')
                 st.markdown(f"**Task:** {query_preview}  \n**Status:** {task['status']} | **Date:** {task['created_at']}")
@@ -293,4 +320,4 @@ if st.session_state.step_index >= 0 and not st.session_state.running:
                     st.caption("No findings.")
                 st.markdown("---")
         else:
-            st.info("Nothing here yet.")
+            st.info("No saved task history yet.")

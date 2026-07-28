@@ -102,3 +102,29 @@ def get_all_tasks():
 
     conn.close()
     return tasks_list
+
+def clear_task_history() -> int:
+    """
+    Delete all persisted task-history tasks and findings atomically.
+    Return the number of deleted task rows.
+    Raise the original exception if deletion fails.
+    """
+    conn = sqlite3.connect(DB_FILE)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA foreign_keys = ON")
+        cursor.execute("BEGIN TRANSACTION")
+
+        cursor.execute("SELECT COUNT(*) FROM tasks")
+        task_count = cursor.fetchone()[0]
+
+        cursor.execute("DELETE FROM findings")
+        cursor.execute("DELETE FROM tasks")
+
+        conn.commit()
+        return task_count
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
