@@ -745,8 +745,9 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
                         if len(findings) >= max_pages:
                             break
 
-                        # Reserve 2 bounded research-candidate evaluations for the GitHub fallback.
-                        if max_pages >= 3 and len(findings) < 2:
+                        # Reserve 2 bounded research-candidate evaluations for the GitHub fallback
+                        # while additional findings are still needed.
+                        if max_pages >= 3 and len(findings) < max_pages:
                             if attempts_count[0] >= MAX_CANDIDATE_EVALUATIONS - 2:
                                 break
 
