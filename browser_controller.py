@@ -22,6 +22,7 @@ from source_classifier import postprocess_findings
 
 # ── Safety constants ─────────────────────────────────────────────────────
 MAX_PAGES = 5
+MAX_CANDIDATE_EVALUATIONS = 10
 PAGE_TIMEOUT_MS = 30_000  # 30 seconds
 SNIPPET_LENGTH = 500      # max characters per page snippet
 
@@ -680,8 +681,8 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
             try:
                 usajobs_page = context.new_page()
                 for i, q in enumerate(queries):
-                    q_max = max_pages - (len(queries) - 1 - i)
-                    if attempts_count[0] >= max_pages or attempts_count[0] >= q_max:
+                    q_max = MAX_CANDIDATE_EVALUATIONS - (len(queries) - 1 - i)
+                    if attempts_count[0] >= MAX_CANDIDATE_EVALUATIONS or attempts_count[0] >= q_max:
                         continue
                     if len(findings) >= min(3, max_pages):
                         break
@@ -695,7 +696,7 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
                     _search_usajobs(
                         usajobs_page, simplified_q, findings, seen_urls,
                         max_to_add=min(3, max_pages) - len(findings),
-                        attempt_state={"count": attempts_count, "max": q_max, "global_max": max_pages}
+                        attempt_state={"count": attempts_count, "max": q_max, "global_max": MAX_CANDIDATE_EVALUATIONS}
                     )
             finally:
                 if usajobs_page:
@@ -703,8 +704,8 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
 
         # ── Stage 1.1: Mojeek ──────────────────────────────────────
         for i, q in enumerate(queries):
-            q_max = max_pages - (len(queries) - 1 - i)
-            if attempts_count[0] >= max_pages or attempts_count[0] >= q_max:
+            q_max = MAX_CANDIDATE_EVALUATIONS - (len(queries) - 1 - i)
+            if attempts_count[0] >= MAX_CANDIDATE_EVALUATIONS or attempts_count[0] >= q_max:
                 continue
             if len(findings) >= max_pages:
                 break
@@ -739,18 +740,17 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
                     filtered.sort(key=_relevance_score, reverse=True)
 
                     for url, _link_text in filtered[:10]:
-                        if attempts_count[0] >= max_pages or attempts_count[0] >= q_max:
+                        if attempts_count[0] >= MAX_CANDIDATE_EVALUATIONS or attempts_count[0] >= q_max:
                             break
                         if len(findings) >= max_pages:
                             break
 
-                        # Reserve up to 2 bounded research-candidate evaluations for later fallback-source stages
-                        # whenever max_pages is at least 3 and fewer than 2 findings have been collected.
+                        # Reserve 2 bounded research-candidate evaluations for the GitHub fallback.
                         if max_pages >= 3 and len(findings) < 2:
-                            if attempts_count[0] >= max_pages - 2:
+                            if attempts_count[0] >= MAX_CANDIDATE_EVALUATIONS - 2:
                                 break
 
-                        _visit_and_collect(page, url, q, q_keywords, findings, seen_urls, attempt_state={"count": attempts_count, "max": q_max, "global_max": max_pages})
+                        _visit_and_collect(page, url, q, q_keywords, findings, seen_urls, attempt_state={"count": attempts_count, "max": q_max, "global_max": MAX_CANDIDATE_EVALUATIONS})
 
             except Exception:
                 pass  # Mojeek failed entirely — proceed to next query
@@ -758,8 +758,8 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
         # ── Stage 1.5: Indeed (Career queries only) ──────────────
         if len(findings) < max_pages and is_career:
             for i, q in enumerate(queries):
-                q_max = max_pages - (len(queries) - 1 - i)
-                if attempts_count[0] >= max_pages or attempts_count[0] >= q_max:
+                q_max = MAX_CANDIDATE_EVALUATIONS - (len(queries) - 1 - i)
+                if attempts_count[0] >= MAX_CANDIDATE_EVALUATIONS or attempts_count[0] >= q_max:
                     continue
                 if len(findings) >= max_pages:
                     break
@@ -772,14 +772,14 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
                 _search_indeed(
                     page, simplified_q, findings, seen_urls,
                     max_to_add=max_pages - len(findings),
-                    attempt_state={"count": attempts_count, "max": q_max, "global_max": max_pages}
+                    attempt_state={"count": attempts_count, "max": q_max, "global_max": MAX_CANDIDATE_EVALUATIONS}
                 )
 
         # ── Stage 2: GitHub (if needed) ──────────────────────────
         if len(findings) < max_pages:
             for i, q in enumerate(queries):
-                q_max = max_pages - (len(queries) - 1 - i)
-                if attempts_count[0] >= max_pages or attempts_count[0] >= q_max:
+                q_max = MAX_CANDIDATE_EVALUATIONS - (len(queries) - 1 - i)
+                if attempts_count[0] >= MAX_CANDIDATE_EVALUATIONS or attempts_count[0] >= q_max:
                     continue
                 if len(findings) >= max_pages:
                     break
@@ -792,14 +792,14 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
                 _search_github(
                     page, simplified_q, q_keywords, findings, seen_urls,
                     max_to_add=max_pages - len(findings),
-                    attempt_state={"count": attempts_count, "max": q_max, "global_max": max_pages}
+                    attempt_state={"count": attempts_count, "max": q_max, "global_max": MAX_CANDIDATE_EVALUATIONS}
                 )
 
         # ── Stage 3: Wikipedia (if needed) ───────────────────────
         if len(findings) < max_pages:
             for i, q in enumerate(queries):
-                q_max = max_pages - (len(queries) - 1 - i)
-                if attempts_count[0] >= max_pages or attempts_count[0] >= q_max:
+                q_max = MAX_CANDIDATE_EVALUATIONS - (len(queries) - 1 - i)
+                if attempts_count[0] >= MAX_CANDIDATE_EVALUATIONS or attempts_count[0] >= q_max:
                     continue
                 if len(findings) >= max_pages:
                     break
@@ -807,14 +807,14 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
                 _search_wikipedia(
                     page, q, q_keywords, findings, seen_urls,
                     max_to_add=max_pages - len(findings),
-                    attempt_state={"count": attempts_count, "max": q_max, "global_max": max_pages}
+                    attempt_state={"count": attempts_count, "max": q_max, "global_max": MAX_CANDIDATE_EVALUATIONS}
                 )
 
         # ── Stage 4: arXiv (if needed) ───────────────────────────
         if len(findings) < max_pages:
             for i, q in enumerate(queries):
-                q_max = max_pages - (len(queries) - 1 - i)
-                if attempts_count[0] >= max_pages or attempts_count[0] >= q_max:
+                q_max = MAX_CANDIDATE_EVALUATIONS - (len(queries) - 1 - i)
+                if attempts_count[0] >= MAX_CANDIDATE_EVALUATIONS or attempts_count[0] >= q_max:
                     continue
                 if len(findings) >= max_pages:
                     break
@@ -827,7 +827,7 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
                 _search_arxiv(
                     page, simplified_q, q_keywords, findings, seen_urls,
                     max_to_add=max_pages - len(findings),
-                    attempt_state={"count": attempts_count, "max": q_max, "global_max": max_pages}
+                    attempt_state={"count": attempts_count, "max": q_max, "global_max": MAX_CANDIDATE_EVALUATIONS}
                 )
 
         browser.close()
