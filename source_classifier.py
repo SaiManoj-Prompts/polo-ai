@@ -41,6 +41,10 @@ def get_canonical_url(url: str) -> str:
         canonical += "?" + query_str
     return canonical
 
+def _has_path_segment(path: str, segment: str) -> bool:
+    normalized = path if path.endswith("/") else path + "/"
+    return f"/{segment}/" in normalized
+
 def get_source_type(url: str, title: str = "", query: str = "") -> str:
     parsed = urllib.parse.urlparse(url)
     hostname = (parsed.hostname or "").lower()
@@ -67,7 +71,7 @@ def get_source_type(url: str, title: str = "", query: str = "") -> str:
         is_docs = True
     elif hostname.startswith("docs."):
         is_docs = True
-    elif path.startswith("/docs") or path.startswith("/documentation"):
+    elif _has_path_segment(path, "docs") or _has_path_segment(path, "documentation"):
         is_docs = True
     else:
         # Title based rule
@@ -89,7 +93,7 @@ def get_source_type(url: str, title: str = "", query: str = "") -> str:
     for job_host in known_job_hosts:
         if hostname == job_host or hostname.endswith(f".{job_host}"):
             if job_host == "linkedin.com":
-                if path.startswith("/jobs/") or path == "/jobs":
+                if _has_path_segment(path, "jobs"):
                     is_job = True
             else:
                 is_job = True
@@ -106,7 +110,7 @@ def get_source_type(url: str, title: str = "", query: str = "") -> str:
             is_news = True
             break
     if not is_news:
-        if path.startswith("/news/") or path.startswith("/article/") or path.startswith("/blog/"):
+        if _has_path_segment(path, "news") or _has_path_segment(path, "article") or _has_path_segment(path, "blog"):
             is_news = True
 
     if is_news:
