@@ -3,6 +3,7 @@ import streamlit as st
 from browser_controller import search_and_collect
 import db_manager
 from report_generator import generate_report
+from source_classifier import get_source_type
 import planner
 
 # ── Page config ──────────────────────────────────────────────────────────
@@ -228,7 +229,11 @@ if st.session_state.findings:
             st.warning("⚠️ No relevant sources found for this query. Try rephrasing your request or ask about a different topic.")
         else:
             with st.container(border=True):
+                s_type = finding.get("source_type")
+                if not s_type:
+                    s_type = get_source_type(finding.get("url", ""), finding.get("title", ""), st.session_state.task)
                 st.markdown(f"#### {idx}. {finding['title']}")
+                st.caption(f"🏷️ **{s_type}**")
                 st.markdown(f"[{finding['url']}]({finding['url']})")
                 st.caption(finding["snippet"])
 else:
@@ -315,7 +320,10 @@ if st.session_state.step_index >= 0 and not st.session_state.running:
                         if not f.get('url') or f.get('title') == 'Insufficient results':
                             st.caption("⚠️ No relevant sources found.")
                         else:
-                            st.caption(f"- [{f['title']}]({f['url']})")
+                            s_type = f.get("source_type")
+                            if not s_type:
+                                s_type = get_source_type(f.get("url", ""), f.get("title", ""), task.get("query", ""))
+                            st.caption(f"- 🏷️ **{s_type}** | [{f['title']}]({f['url']})")
                 else:
                     st.caption("No findings.")
                 st.markdown("---")

@@ -18,6 +18,7 @@ Safety rules enforced:
 import re
 import urllib.parse
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+from source_classifier import postprocess_findings
 
 # ── Safety constants ─────────────────────────────────────────────────────
 MAX_PAGES = 5
@@ -830,6 +831,8 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
                 )
 
         browser.close()
+
+    findings = postprocess_findings(findings, max_pages, query)
 
     # Only show "insufficient" if ALL four sources failed
     if len(findings) == 0:

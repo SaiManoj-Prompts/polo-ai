@@ -1,5 +1,6 @@
 import json
 import re
+from source_classifier import get_source_type
 
 def generate_report(query: str, findings: list) -> tuple[str, str]:
     """
@@ -50,8 +51,9 @@ def generate_report(query: str, findings: list) -> tuple[str, str]:
             
             if not snippet:
                 continue
-                
-            is_job = "usajobs.gov" in url or "indeed.com" in url or snippet.startswith("Agency: ") or snippet.startswith("Company: ")
+
+            s_type = f.get("source_type") or get_source_type(url, title, query)
+            is_job = (s_type == "Job listing")
             
             if is_job:
                 # Safe structured extraction
@@ -67,8 +69,8 @@ def generate_report(query: str, findings: list) -> tuple[str, str]:
                     loc = parts[1].strip()
                 else:
                     org = org_loc_line.replace("Agency: ", "").replace("Company: ", "").strip()
-                
-                details = [f"**Title:** {title}"]
+
+                details = [f"**[{s_type}] {title}**"]
                 if org and org != "Unknown Agency" and org != "Unknown Company":
                     details.append(f"**Organization:** {org}")
                 if loc and loc != "Unknown Location":
@@ -111,8 +113,8 @@ def generate_report(query: str, findings: list) -> tuple[str, str]:
                 first_sentence = first_sentence.strip()
                 if len(first_sentence) > 150:
                     first_sentence = first_sentence[:147] + "..."
-                    
-                finding_text = f"**{title}:** {first_sentence}"
+
+                finding_text = f"**[{s_type}] {title}:** {first_sentence}"
                 
             md_lines.append(f"- {finding_text}")
             report_dict["key_findings"].append(finding_text)
