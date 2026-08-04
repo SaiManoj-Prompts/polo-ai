@@ -161,14 +161,14 @@ Do not include any explanation or markdown code blocks, just the raw JSON object
 
         # Validate plan
         steps = parsed.get("plan", [])
-        if not isinstance(steps, list) or not (3 <= len(steps) <= 8):
+        if not isinstance(steps, list) or len(steps) < 3:
             raise ValueError(f"Invalid plan steps: {steps}")
 
         cleaned_steps = [clean_text(s) for s in steps]
         valid_steps = [s for s in cleaned_steps if s and _is_plan_step_on_topic(s, query)]
 
         if len(valid_steps) >= 3:
-            steps = valid_steps
+            steps = valid_steps[:8]
         else:
             steps = fallback_plan
 
