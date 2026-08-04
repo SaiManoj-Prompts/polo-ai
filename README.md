@@ -17,7 +17,7 @@ unsupported conclusions.
 * **Safe Public Browser Research:** Uses Playwright for headless, read-only data retrieval across sources like Mojeek, Wikipedia, GitHub, and arXiv.
 * **Relevance Filtering:** Enforces keyword thresholds, filters noise, and ensures findings match the query.
 * **USAJobs & Indeed Career-Query Support:** Specialized scraping and formatting logic for career/internship searches.
-* **SQLite Task History:** Saves past research tasks and findings locally in `polo_ai.db`.
+* **SQLite Task History:** Research tasks/findings are saved locally in SQLite. The UI provides Clear Task History. Clearing history permanently deletes locally saved task-history records; users should treat it as destructive.
 * **Structured Reports:** Generates structured Markdown and JSON reports with source links.
 * **Report Download:** Download final reports directly from the UI.
 * **Honest Insufficient-Results Handling:** Gracefully alerts the user if not enough relevant data is found.
@@ -25,6 +25,13 @@ unsupported conclusions.
 ## How it Works
 
 **User Task** -> **Planner** -> **Validated Queries** -> **Public-Source Search** -> **Relevance Checks** -> **Findings** -> **SQLite History** -> **Report**
+
+**User Workflow:**
+* Enter a research task in the app
+* Click **Execute Task**
+* Review plan and progress states
+* Review gathered results and the generated report
+* Download Markdown or JSON output when available
 
 ## Technology Stack
 
@@ -65,6 +72,13 @@ Python, Streamlit, Playwright, SQLite, Ollama, and Requests.
    streamlit run app.py
    ```
 
+## Running Tests
+
+To run the automated test suite, use the following exact Windows project command:
+```cmd
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
 ## Example Tasks
 
 * "Government internships"
@@ -75,8 +89,9 @@ Python, Streamlit, Playwright, SQLite, Ollama, and Requests.
 
 * Polo AI interacts strictly with public pages.
 * It does **not** log in to services, submit forms, apply for jobs, bypass CAPTCHAs, or use paid APIs.
-* It does not guarantee complete or perfectly current search results.
-* It prioritizes accuracy and safety, showing an honest "insufficient-results" message when applicable rather than hallucinating answers.
+* Live search availability and result quality vary with external websites.
+* Research execution is coupled to Streamlit's UI lifecycle; refreshing or disconnecting during an active search can interrupt that run.
+* The app safely reports insufficient sources rather than inventing results.
 
 ## Project Structure
 
