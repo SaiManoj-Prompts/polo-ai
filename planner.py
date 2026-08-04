@@ -8,7 +8,8 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL_NAME = "llama3.2"
 
 STOPWORDS = {"the", "and", "how", "what", "is", "a", "an", "of", "in", "for", "to", "with", "on", "at", "by", "from", "or", "as", "it", "be", "are", "was", "were", "been", "has", "have", "had", "do", "does", "did", "but", "not", "so", "if", "its", "my", "that", "this", "which", "who", "when", "where", "why", "can", "will", "should", "would", "could", "most", "more", "very", "just", "about"}
-EXPANSION_TERMS = {"jobs", "internships", "careers", "frameworks", "libraries", "documentation", "official", "requirements", "funding", "research", "companies", "applications", "salary", "hiring"}
+EXPANSION_TERMS = {"jobs", "internships", "careers", "frameworks", "libraries", "documentation", "official", "requirements", "funding", "research", "companies", "applications", "salary", "hiring", "architecture", "capabilities", "performance", "deployment", "integration", "scalability", "maintainability", "benchmarks"}
+MULTIWORD_EXPANSIONS = {"use cases"}
 NON_ANCHOR_TERMS = {
     "open", "source", "best", "latest", "top", "guide", "comparison",
     "compare", "overview", "introduction", "information", "news"
@@ -89,6 +90,10 @@ def _validate_query(candidate: str, original_task: str) -> bool:
     if len(shared) == 1:
         shared_token = list(shared)[0]
         if any(w in EXPANSION_TERMS and w != shared_token for w in cand_tokens):
+            return True
+        
+        c_norm = _normalize_query(candidate)
+        if any(f" {phrase} " in f" {c_norm} " for phrase in MULTIWORD_EXPANSIONS):
             return True
 
     return False
