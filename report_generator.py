@@ -14,7 +14,12 @@ def generate_report(query: str, findings: list) -> tuple[str, str]:
     Returns:
         Tuple of (markdown_string, json_string).
     """
-    is_insufficient = len(findings) == 1 and (not findings[0].get("url") or findings[0].get("title") == "Insufficient results")
+    # A result is insufficient if there are no findings, or if every
+    # finding is a sentinel (no URL or title == "Insufficient results").
+    is_insufficient = not findings or all(
+        not f.get("url") or f.get("title") == "Insufficient results"
+        for f in findings
+    )
     has_findings = bool(findings) and not is_insufficient
     status = "Complete - Sources compiled." if has_findings else "Incomplete - insufficient sources found."
     

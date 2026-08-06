@@ -146,5 +146,50 @@ class TestWorkflowIntegration(unittest.TestCase):
         self.assertEqual(report_data["completion_status"], "Incomplete - insufficient sources found.")
         self.assertEqual(len(report_data["key_findings"]), 0)
 
+    @patch("planner.requests.post")
+    @patch("browser_controller.search_and_collect")
+    def test_offtopic_source_produces_incomplete_status(self, mock_search, mock_post):
+        """An off-topic source (like 'AI art - Wikipedia') with a real URL
+        must NOT produce 'Complete - Sources compiled.' — it should trigger
+        the 'Incomplete' pathway."""
+        # 1. Mock Ollama returning a valid plan
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "response": '{"plan": ["Step 1", "Step 2", "Step 3"], "queries": ["LangChain vs CrewAI vs AutoGen"], "category": "technical research"}'
+        }
+        mock_post.return_value = mock_response
+
+        # 2. Mock browser returning the insufficient sentinel (after post-collection gate)
+        mock_search.return_value = [
+            {"title": "Insufficient results", "url": "", "snippet": "Insufficient relevant sources found for this query."}
+        ]
+
+        task_query = "Compare LangChain, CrewAI, and AutoGen for building open-source AI agents"
+
+        # --- EXECUTING THE WORKFLOW ---
+        ai_plan = planner.generate_plan(task_query)
+        findings = browser_controller.search_and_collect(
+            task_query,
+            queries=ai_plan.get("queries"),
+            category=ai_plan.get("category")
+        )
+
+        db_manager.save_task(
+            query=task_query,
+            status="Completed",
+            findings=findings,
+            queries=ai_plan.get("queries")
+        )
+
+        md_report, json_report = generate_report(task_query, findings)
+
+        # --- ASSERTIONS ---
+        self.assertIn("Incomplete - insufficient sources found.", md_report)
+
+        report_data = json.loads(json_report)
+        self.assertEqual(report_data["completion_status"], "Incomplete - insufficient sources found.")
+        self.assertEqual(len(report_data["key_findings"]), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

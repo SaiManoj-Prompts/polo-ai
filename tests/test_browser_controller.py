@@ -62,6 +62,9 @@ def _make_visit_side_effect(max_successes=float("inf")):
       - deduplicates via ``seen_urls``
       - appends a finding for the first *max_successes* unique URLs
       - returns ``False`` for subsequent calls (simulates irrelevant content)
+
+    Findings include representative query keywords so they survive the
+    post-collection relevance gate (which requires ≥2 keyword matches).
     """
     success_count = [0]
 
@@ -80,9 +83,9 @@ def _make_visit_side_effect(max_successes=float("inf")):
         seen_urls.add(normalized)
         if success_count[0] < max_successes:
             findings.append({
-                "title": f"Result {success_count[0]}",
+                "title": f"AI Agent Frameworks Result {success_count[0]}",
                 "url": url,
-                "snippet": f"Content about the research topic {success_count[0]}.",
+                "snippet": f"Comparing agent frameworks and their architecture {success_count[0]}.",
             })
             success_count[0] += 1
             return True
@@ -330,6 +333,130 @@ class TestCareerQueryDetection(unittest.TestCase):
     def test_generic_research_not_career(self):
         kw = _extract_query_keywords("AI agent frameworks comparison")
         self.assertFalse(_is_career_query(kw))
+
+
+# ── 7. Wikipedia redirect path filtering ─────────────────────────────────
+
+
+class TestWikipediaRedirectFiltering(unittest.TestCase):
+    """The Wikipedia redirect path (Case 1) must run the same relevance
+    checks as Case 2 — specifically _is_snippet_relevant() and the
+    off-topic domain check — so off-topic redirects are rejected."""
+
+    @patch("browser_controller._block_forms_and_submissions")
+    @patch("browser_controller._extract_text_snippet")
+    def test_wikipedia_redirect_rejects_off_topic_article(self, mock_snippet, _mock_block):
+        """When Wikipedia redirects to an off-topic article like 'AI art',
+        the snippet-relevance check should reject it even though the title
+        contains the keyword 'ai'."""
+        from browser_controller import _search_wikipedia
+
+        mock_page = MagicMock()
+        # Simulate Wikipedia redirecting to /wiki/AI_art
+        mock_page.url = "https://en.wikipedia.org/wiki/AI_art"
+        mock_page.title.return_value = "AI art - Wikipedia"
+        mock_snippet.return_value = (
+            "There are many approaches used by artists to develop AI visual art. "
+            "Some artists create these works using deep learning algorithms and "
+            "generative adversarial networks to produce unique paintings."
+        )
+
+        findings = []
+        seen_urls = set()
+        query = "Compare LangChain, CrewAI, and AutoGen for building open-source AI agents"
+        query_keywords = _extract_query_keywords(query)
+
+        _search_wikipedia(
+            mock_page, query, query_keywords, findings, seen_urls,
+            max_to_add=2, attempt_state=None
+        )
+
+        self.assertEqual(len(findings), 0,
+                         "Off-topic Wikipedia redirect 'AI art' must be rejected")
+
+
+# ── 8. Title relevance threshold for broad queries ───────────────────────
+
+
+class TestTitleRelevanceThreshold(unittest.TestCase):
+    """For queries with ≥3 keywords, _is_title_relevant() must require
+    ≥2 keyword matches, preventing a single common word from
+    greenlighting unrelated pages."""
+
+    def test_single_keyword_match_rejected_for_broad_query(self):
+        """'AI art - Wikipedia' matches only 'ai' — must be rejected
+        for a broad multi-keyword query."""
+        from browser_controller import _is_title_relevant
+        keywords = _extract_query_keywords(
+            "Compare LangChain, CrewAI, and AutoGen for building open-source AI agents"
+        )
+        self.assertGreaterEqual(len(keywords), 3, "Sanity: query should have ≥3 keywords")
+        self.assertFalse(
+            _is_title_relevant("AI art - Wikipedia", keywords),
+            "Title matching only 1 keyword should be rejected for broad queries"
+        )
+
+    def test_multi_keyword_match_accepted_for_broad_query(self):
+        """'LangChain vs CrewAI AI Agent Frameworks' matches multiple
+        keywords — must be accepted."""
+        from browser_controller import _is_title_relevant
+        keywords = _extract_query_keywords(
+            "Compare LangChain, CrewAI, and AutoGen for building open-source AI agents"
+        )
+        self.assertTrue(
+            _is_title_relevant("LangChain vs CrewAI AI Agent Frameworks", keywords),
+            "Title matching ≥2 keywords should be accepted"
+        )
+
+    def test_narrow_query_still_allows_single_match(self):
+        """For a narrow query (<3 keywords), 1 match should still suffice."""
+        from browser_controller import _is_title_relevant
+        keywords = _extract_query_keywords("LangChain guide")
+        self.assertLess(len(keywords), 3, "Sanity: narrow query should have <3 keywords")
+        self.assertTrue(
+            _is_title_relevant("LangChain Documentation", keywords),
+            "Narrow queries should accept single-keyword title matches"
+        )
+
+
+# ── 9. Post-collection relevance gate ────────────────────────────────────
+
+
+class TestPostCollectionRelevanceGate(unittest.TestCase):
+    """When all collected findings are off-topic (< 2 keyword matches),
+    search_and_collect must return the insufficient results sentinel."""
+
+    def test_single_offtopic_finding_returns_insufficient(self):
+        """A single off-topic finding (only 1 keyword match in
+        title+snippet) should be filtered to produce the
+        insufficient-results sentinel."""
+        with patch("browser_controller.sync_playwright",
+                   return_value=_make_playwright_cm()), \
+             patch("browser_controller._extract_search_links",
+                   return_value=[]), \
+             patch("browser_controller._search_github"), \
+             patch("browser_controller._search_wikipedia") as mock_wiki, \
+             patch("browser_controller._search_arxiv"), \
+             patch("browser_controller.postprocess_findings") as mock_pp:
+
+            # Simulate postprocess returning the off-topic AI art finding
+            mock_pp.return_value = [{
+                "title": "AI art - Wikipedia",
+                "url": "https://en.wikipedia.org/wiki/AI_art",
+                "snippet": "There are many approaches used by artists to develop AI visual art.",
+                "source_type": "Other",
+                "quality_score": 1
+            }]
+
+            result = search_and_collect(
+                "Compare LangChain, CrewAI, and AutoGen for building open-source AI agents",
+                max_pages=5
+            )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["title"], "Insufficient results",
+                         "Off-topic finding must be filtered; sentinel returned")
+        self.assertFalse(result[0].get("url"))
 
 
 if __name__ == "__main__":

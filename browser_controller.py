@@ -108,20 +108,23 @@ def _is_title_relevant(title: str, query_keywords: set) -> bool:
         if word in title_lower:
             return False
 
-    # Require at least 1 keyword overlap (or fuzzy match) with the query
+    # Require keyword overlap (or fuzzy match) with the query.
+    # For broad queries (≥3 keywords), require ≥2 matches to prevent
+    # a single common word like "ai" from greenlighting unrelated pages.
+    min_matches = 2 if len(query_keywords) >= 3 else 1
     title_words = set(re.findall(r"[a-zA-Z0-9]+", title_lower))
+    match_count = 0
     for qw in query_keywords:
         for tw in title_words:
             if qw == tw:
-                return True
+                match_count += 1
+                break
             # Prefix match for words >= 4 chars (e.g. agent vs agentic)
             if len(qw) >= 4 and len(tw) >= 4:
                 if qw.startswith(tw) or tw.startswith(qw):
-                    return True
-    return False
-
-
-    return False
+                    match_count += 1
+                    break
+    return match_count >= min_matches
 
 
 def _is_snippet_relevant(snippet: str, query: str, query_keywords: set) -> bool:
@@ -345,19 +348,10 @@ def _search_wikipedia(page, query, query_keywords, findings, seen_urls, max_to_a
     current_url = page.url
 
     # Case 1: Wikipedia redirected directly to an article
+    # Use _visit_and_collect() so the redirect path runs the same
+    # snippet-relevance and off-topic domain checks as Case 2.
     if "/wiki/" in current_url and "index.php" not in current_url:
-        normalized = current_url.rstrip('/')
-        if normalized not in seen_urls:
-            if attempt_state:
-                if attempt_state["count"][0] >= attempt_state["max"] or attempt_state["count"][0] >= attempt_state["global_max"]:
-                    return
-                attempt_state["count"][0] += 1
-            seen_urls.add(normalized)
-            title = page.title() or "(No title)"
-            if _is_title_relevant(title, query_keywords):
-                snippet = _extract_text_snippet(page)
-                if snippet:
-                    findings.append({"title": title, "url": current_url, "snippet": snippet})
+        _visit_and_collect(page, current_url, query, query_keywords, findings, seen_urls, attempt_state=attempt_state)
         return
 
     # Case 2: Wikipedia showed a search results page
@@ -835,7 +829,19 @@ def search_and_collect(query: str, max_pages: int = MAX_PAGES, queries: list = N
 
     findings = postprocess_findings(findings, max_pages, query)
 
-    # Only show "insufficient" if ALL four sources failed
+    # Post-collection relevance gate: verify each finding has at least
+    # 2 query keyword matches in its title + snippet.  This prevents
+    # off-topic pages that slipped past earlier checks from reaching
+    # the report as a false "Complete" result.
+    if findings:
+        query_kw = _extract_query_keywords(query)
+        def _is_finding_relevant(f):
+            combined = f"{f.get('title', '')} {f.get('snippet', '')}".lower()
+            combined_words = set(re.findall(r"[a-z0-9]+", combined))
+            return len(query_kw & combined_words) >= 2
+        findings = [f for f in findings if _is_finding_relevant(f)]
+
+    # Show "insufficient" if no relevant findings survived
     if len(findings) == 0:
         return [{
             "title": "Insufficient results",
